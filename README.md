@@ -1,0 +1,74 @@
+# 弾幕スライド
+
+登壇中のスライドにコメントを**重ねて**流す。観客はQRを読んで投稿するだけ、
+登壇者は自分の画面でそのまま弾幕が見える。
+
+GDGoC Japan DevFest Hackathon 2026 提出作品。
+
+## 何を解くのか
+
+LT で弾幕を流す既存のやり方は、どれかが必ず欠ける。
+
+- 別画面に弾幕を出す → 登壇者がスライドと弾幕を同時に見られない
+- Chrome 拡張で DOM に重ねる → PowerPoint や Keynote では原理的に動かない
+- 配信ソフトで合成する → 拡張ディスプレイや登壇モードで崩れる
+
+このアプリは**描画実装を1本に保ったまま、スライドへの「貼り方」を3つ用意する**ことで、
+スライドツールを問わず同じ挙動にする。
+
+## 貼り方
+
+| | 方式 | 向く場面 |
+|---|---|---|
+| A | 弾幕ページを単体で全画面表示 | 弾幕だけを別画面に出したいとき |
+| B | 画面キャプチャとブラウザ内で合成 | 投影先が1枚で、スピーカーノートを手元に残したいとき |
+| C | **透過ウィンドウを最前面に重ねる** | スライドツールを問わない既定の方式 |
+
+C が既定。macOS / Windows の両方で、全画面のスライドショーの上に残ることを確認している。
+
+## 構成
+
+```
+観客のスマホ ──投稿──▶ Cloud Firestore ──購読──▶ 登壇者の弾幕ページ
+                            ▲
+                     Firebase Hosting が
+                     弾幕ページ / 投稿ページを配信
+```
+
+サーバコードは持たない。Hosting と Firestore だけで動く。
+整合性と安全性はすべて **Firestore Security Rules** に寄せている（→ [SECURITY.md](SECURITY.md)）。
+
+## データモデル
+
+```
+tracks/{trackId}        { name, title, speaker, sessionStartedAt, stopped, ownerUid, createdAt }
+  /comments/{id}        { text, createdAt }
+  /private/handoff      { code }
+  /operators/{uid}      { code }
+  /posters/{uid}        { lastPostAt }
+```
+
+`trackId` は会場の「Track A」そのもので1日固定。だから **QR を印刷物に載せられる**。
+登壇者の交代は `sessionStartedAt` の更新だけで済み、QR は貼り替えない。
+
+## 開発
+
+```bash
+npm install
+
+npm run dev          # エミュレータ（Firestore / Auth / Hosting）
+npm run test:rules    # Security Rules のテスト（42件）
+npm run preview       # 使い捨てURLにプレビュー配信
+npm run deploy        # Hosting と Rules を本番へ
+```
+
+Rules のテストには JDK が必要（`brew install openjdk`）。
+
+## 本番
+
+- Hosting: https://df-hackathon-2026.web.app
+- Firestore: `asia-northeast1`
+
+## ライセンス
+
+MIT

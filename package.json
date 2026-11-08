@@ -1,0 +1,16 @@
+{
+  "name": "danmaku-slide",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:rules": "firebase emulators:exec --only firestore --project danmaku-slide-test 'node test/rules.test.mjs'",
+    "dev": "firebase emulators:start",
+    "deploy:rules": "firebase deploy --only firestore:rules",
+    "deploy": "firebase deploy --only hosting,firestore:rules",
+    "preview": "firebase hosting:channel:deploy preview --expires 7d"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^6.0.0",
+    "firebase": "^13.2.0"
+  }
+}
