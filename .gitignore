@@ -7,3 +7,7 @@ ui-debug.log
 .env
 .env.*
 .DS_Store
+
+# firebase apps:sdkconfig からの生成物（npm run config で作り直す）
+.firebase-config.json
+public/firebase-config.js

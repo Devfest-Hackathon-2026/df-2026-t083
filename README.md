@@ -55,14 +55,32 @@ tracks/{trackId}        { name, title, speaker, sessionStartedAt, stopped, owner
 
 ```bash
 npm install
+npm run config        # Firebase の Web 設定を生成（初回と設定変更時）
 
-npm run dev          # エミュレータ（Firestore / Auth / Hosting）
-npm run test:rules    # Security Rules のテスト（42件）
+npm run dev           # エミュレータ（Firestore / Auth / Hosting）
+npm run test:rules    # Rules のテスト（エミュレータ / 42件）
+npm run test:e2e      # Rules のテスト（本番 / 27件、自分で後片付けする）
 npm run preview       # 使い捨てURLにプレビュー配信
 npm run deploy        # Hosting と Rules を本番へ
 ```
 
 Rules のテストには JDK が必要（`brew install openjdk`）。
+
+### Firebase の設定について
+
+`public/firebase-config.js` と `.firebase-config.json` は **リポジトリに置かず、生成する**。
+中身は Hosting から公開される性質のもの（ブラウザに配る設定なので隠せない）だが、
+鍵のような文字列をリポジトリに残さないために `npm run config` で都度取り直す形にしている。
+実体は `firebase apps:sdkconfig` の出力。
+
+### テストが2種類ある理由
+
+`test:rules` はエミュレータに対して Rules の論理を網羅的に当てる。速いし何度でも回せる。
+
+`test:e2e` は**デプロイ済みの本番**に対して同じことをやる。エミュレータと本番で
+`getAfter()` やクエリ制約の挙動が食い違っていないか、インデックスが本当に足りているかは
+本番でしか分からないので、両方を維持する。終わったら検証用トラックと匿名アカウントを
+自分で削除する。
 
 ## 本番
 

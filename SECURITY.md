@@ -84,6 +84,13 @@ Firestore は App Check 強制に対応している。
 `firestore.rules` が設計そのもので、`test/rules.test.mjs` が「本当にそう守れているか」の証拠。
 
     npm install
-    npm run test:rules
+    npm run test:rules    # エミュレータ / 42件
+    npm run test:e2e      # 本番 / 27件
 
-42 件すべて通る状態を維持する。Rules を触ったらここが落ちないことを確認する。
+エミュレータ 42 件と本番 27 件がすべて通る状態を維持する。
+Rules を触ったら両方が落ちないことを確認する。
+
+本番側を別に持っているのは、エミュレータと本番で `getAfter()` やクエリ制約の挙動が
+食い違っていないか、インデックスが本当に足りているかは本番でしか分からないため。
+2026-11-08 時点で、`where(createdAt >= sessionStartedAt) + orderBy(createdAt desc) + limit(50)`
+が複合インデックスなしで通ることを本番で確認している。
