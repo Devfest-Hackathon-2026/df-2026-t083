@@ -40,6 +40,29 @@ await speaker.createTrack({ name: 'Browser Track', title: '実ブラウザ検証
 
 const browser = await chromium.launch();
 
+// 画面共有の選択ダイアログを出さずに、自動で擬似スクリーンを選ばせる。
+// 人の操作が要る部分を外して、合成そのものを確かめられるようにする。
+const capBrowser = await chromium.launch({
+  args: [
+    // 選択ダイアログを出さずに自動で選ばせる
+    '--auto-select-desktop-capture-source=Entire screen',
+    '--use-fake-ui-for-media-stream',
+    // 実スクリーンが無い環境（headless / CI）では擬似ソースに落とす。
+    // これが無いと NotReadableError で取り込めない。
+    '--use-fake-device-for-media-stream',
+  ],
+});
+async function openCapturing(url) {
+  const ctx = await capBrowser.newContext({ viewport: { width: 1280, height: 720 } });
+  await ctx.grantPermissions([]);
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e.message)));
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  await page.goto(url, { waitUntil: 'load' });
+  return { page, errors, ctx };
+}
+
 /** ページを開いて、致命的なエラーが出ていないことを確かめる。 */
 async function open(url) {
   const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
@@ -359,6 +382,32 @@ await t('トラックを作ると QR と停止ボタンが出る', async () => {
   await page.close();
 });
 
+await t('トラックIDが画面に大きく出る', async () => {
+  // アドレスバーを読ませるのは不親切。何度も聞かれた。
+  const { page, errors, trackId } = await openConsoleWithNewTrack('ID Track');
+  await page.waitForFunction(
+    () => !document.getElementById('idBox')?.classList.contains('hidden'), { timeout: 15000 });
+  const shown = (await page.textContent('#trackId')).trim();
+  assert(shown === trackId, `URL のIDと違う: ${shown} vs ${trackId}`);
+  const size = await page.evaluate(() =>
+    parseFloat(getComputedStyle(document.getElementById('trackId')).fontSize));
+  assert(size >= 20, `小さすぎる: ${size}px`);
+  assert(await page.isVisible('#copyId'), 'コピーが無い');
+  assert(await page.isVisible('#openApp'), 'アプリで開くが無い');
+  assert(errors.length === 0, `エラー: ${errors.join(' / ')}`);
+  await page.close();
+});
+
+await t('「アプリで開く」の呼び先が danmaku:// になっている', async () => {
+  const { page, trackId } = await openConsoleWithNewTrack('App Track');
+  await page.waitForFunction(
+    () => document.getElementById('openApp')?.getAttribute('href')?.startsWith('danmaku:'),
+    { timeout: 15000 });
+  const href = await page.getAttribute('#openApp', 'href');
+  assert(href === `danmaku://track/${trackId}`, `呼び先が違う: ${href}`);
+  await page.close();
+});
+
 await t('生成した QR が実際に読み取れる', async () => {
   const { page } = await open(`${HOST}/speaker.html?emu=1`);
   await page.waitForFunction(
@@ -484,7 +533,283 @@ await t('owner 以外がコンソールを開いても操作できない', async
   await page.close();
 });
 
+// --- 貼り方B: キャプチャ合成 -------------------------------------------
+await t('操作バーが出ていて、何をすればいいか書いてある', async () => {
+  const { page } = await open(`${HOST}/overlay.html?emu=1&track=${TRACK}`);
+  await page.waitForSelector('#bar', { state: 'attached' });
+  await page.waitForFunction(() => document.body.dataset.bar === 'show', { timeout: 5000 });
+  assert(await page.isVisible('#pick'), '「スライドを選ぶ」が無い');
+  assert(await page.isVisible('#full'), '「全画面にする」が無い');
+  assert(/スライドを選ぶと/.test(await page.textContent('#empty')), '案内が無い');
+  await page.close();
+});
+
+await t('しばらく触らないと操作バーが消える（投影の邪魔をしない）', async () => {
+  const { page } = await open(`${HOST}/overlay.html?emu=1&track=${TRACK}`);
+  await page.waitForFunction(() => document.body.dataset.bar === 'show', { timeout: 5000 });
+  await page.waitForFunction(() => document.body.dataset.bar !== 'show', { timeout: 8000 });
+  await page.mouse.move(400, 20);
+  await page.waitForFunction(() => document.body.dataset.bar === 'show', { timeout: 5000 });
+  await page.close();
+});
+
+await t('透過シェルから開いたときは操作バーを出さない', async () => {
+  const { page } = await open(`${HOST}/overlay.html?emu=1&transparent=1&track=${TRACK}`);
+  await page.waitForSelector('#bar', { state: 'attached' });
+  const shown = await page.evaluate(() => getComputedStyle(document.getElementById('bar')).display);
+  assert(shown === 'none', `バーが出ている: ${shown}`);
+  const empty = await page.evaluate(() => getComputedStyle(document.getElementById('empty')).display);
+  assert(empty === 'none', '案内が出ている');
+  await page.close();
+});
+
+await t('スライドを取り込むと下敷きとして描かれる', async () => {
+  const { page, errors, ctx } = await openCapturing(`${HOST}/overlay.html?emu=1&track=${TRACK}`);
+  await page.waitForFunction(
+    () => /Browser Track/.test(document.getElementById('hud')?.textContent ?? ''),
+    { timeout: 20000 });
+
+  assert(await drawnPixels(page) === 0, '取り込む前から描かれている');
+
+  await page.evaluate(() => document.getElementById('pick').click());
+  await page.waitForFunction(() => window.__overlay?.hasSlide === true, { timeout: 20000 });
+  await page.waitForFunction(() => document.getElementById('slide').videoWidth > 0, { timeout: 20000 });
+  await sleep(600);
+
+  // 下敷きが描かれていれば、コメントが無くても画面が埋まる
+  const n = await drawnPixels(page);
+  assert(n > 100000, `下敷きが描かれていない: ${n}`);
+  assert(errors.length === 0, `エラー: ${errors.join(' / ')}`);
+  await ctx.close();
+});
+
+await t('取り込み中に投稿が来るとスライドの上に重なる', async () => {
+  const t9 = 'capture-overlay';
+  const sp = await actor(t9);
+  await sp.createTrack({ name: 'Capture Track' });
+
+  const { page, ctx } = await openCapturing(`${HOST}/overlay.html?emu=1&track=${t9}`);
+  await page.waitForFunction(
+    () => /Capture Track/.test(document.getElementById('hud')?.textContent ?? ''),
+    { timeout: 20000 });
+  await page.evaluate(() => document.getElementById('pick').click());
+  await page.waitForFunction(() => document.getElementById('slide').videoWidth > 0, { timeout: 20000 });
+  await sleep(400);
+
+  const po = await actor(t9);
+  await po.post('スライドの上に出る');
+  await page.waitForFunction(() => (window.__overlay?.flow?.activeCount ?? 0) > 0, { timeout: 20000 });
+
+  // 弾幕が下敷きより後に描かれていること（塗りつぶされていないこと）
+  const order = await page.evaluate(() => {
+    const seen = [];
+    const ctx2 = document.getElementById('stage').getContext('2d');
+    const di = ctx2.drawImage.bind(ctx2), ft = ctx2.fillText.bind(ctx2);
+    ctx2.drawImage = (...a) => { seen.push('backdrop'); return di(...a); };
+    ctx2.fillText = (...a) => { seen.push('danmaku'); return ft(...a); };
+    return new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(() => {
+      ctx2.drawImage = di; ctx2.fillText = ft; res(seen);
+    })));
+  });
+  assert(order.indexOf('backdrop') >= 0, '下敷きが描かれていない');
+  assert(order.indexOf('danmaku') > order.indexOf('backdrop'), '弾幕が下敷きより先に描かれている');
+  await ctx.close();
+});
+
+await t('取り込みをやめると下敷きが消える', async () => {
+  const { page, ctx } = await openCapturing(`${HOST}/overlay.html?emu=1&track=${TRACK}`);
+  await page.waitForFunction(
+    () => /Browser Track/.test(document.getElementById('hud')?.textContent ?? ''),
+    { timeout: 20000 });
+  await page.evaluate(() => document.getElementById('pick').click());
+  await page.waitForFunction(() => window.__overlay?.hasSlide === true, { timeout: 20000 });
+  await page.waitForFunction(() => document.getElementById('slide').videoWidth > 0, { timeout: 20000 });
+  await sleep(400);
+  assert(await drawnPixels(page) > 100000, '下敷きが描かれていない');
+
+  await page.evaluate(() => document.getElementById('drop').click());
+  await sleep(500);
+  assert(await drawnPixels(page) === 0, '下敷きが残っている');
+  assert(await page.evaluate(() => window.__overlay.hasSlide) === false, '状態が戻っていない');
+  await ctx.close();
+});
+
+await t('ブラウザ側で共有を止めても固まったまま映らない', async () => {
+  // Chrome の「共有を停止」を押した場合。video に最後のフレームが残ると、
+  // 止めたはずのスライドが固まって映り続ける。
+  const { page, ctx } = await openCapturing(`${HOST}/overlay.html?emu=1&track=${TRACK}`);
+  await page.waitForFunction(
+    () => /Browser Track/.test(document.getElementById('hud')?.textContent ?? ''),
+    { timeout: 20000 });
+  await page.evaluate(() => document.getElementById('pick').click());
+  await page.waitForFunction(() => document.getElementById('slide').videoWidth > 0, { timeout: 20000 });
+  await sleep(400);
+  assert(await drawnPixels(page) > 100000, '下敷きが描かれていない');
+
+  // トラックを止める = ブラウザの「共有を停止」と同じ
+  await page.evaluate(() => {
+    for (const t of document.getElementById('slide').srcObject.getVideoTracks()) t.stop();
+    document.getElementById('slide').srcObject.getVideoTracks()[0]
+      .dispatchEvent(new Event('ended'));
+  });
+  await sleep(600);
+  assert(await drawnPixels(page) === 0, '止めた後も映り続けている');
+  assert(/止まった/.test(await page.textContent('#hud')), `知らせていない: ${await page.textContent('#hud')}`);
+  await ctx.close();
+});
+
+// --- 登壇コントロール画面（通し）---------------------------------------
+await t('トラック未指定なら理由が出る', async () => {
+  const { page } = await open(`${HOST}/stage.html?emu=1`);
+  await page.waitForFunction(
+    () => /トラックが指定されていない/.test(document.getElementById('stateText')?.textContent ?? ''),
+    { timeout: 15000 });
+  await page.close();
+});
+
+await t('手順は最初の1つが「いま」になっている', async () => {
+  const tS = 'stage-steps';
+  const sp = await actor(tS);
+  await sp.createTrack({ name: 'Stage Track' });
+  const { page, errors } = await open(`${HOST}/stage.html?emu=1&track=${tS}`);
+  await page.waitForFunction(
+    () => /受付中/.test(document.getElementById('stateText')?.textContent ?? ''),
+    { timeout: 20000 });
+  assert(await page.getAttribute('#s1', 'data-state') === 'now', '最初の手順が「いま」でない');
+  assert(await page.isDisabled('#project'), 'スライド未取り込みなのに投影できる');
+  assert(errors.length === 0, `エラー: ${errors.join(' / ')}`);
+  await page.close();
+});
+
+await t('届いたコメントが手元に出る', async () => {
+  const tF = 'stage-feed';
+  const sp = await actor(tF);
+  await sp.createTrack({ name: 'Feed Track' });
+  const { page } = await open(`${HOST}/stage.html?emu=1&track=${tF}`);
+  await page.waitForFunction(
+    () => /受付中/.test(document.getElementById('stateText')?.textContent ?? ''),
+    { timeout: 20000 });
+  await sleep(500);
+  const po = await actor(tF);
+  await po.post('手元に出るはず');
+  await page.waitForFunction(
+    () => document.querySelectorAll('#feed li').length > 0, { timeout: 20000 });
+  assert(/手元に出るはず/.test(await page.textContent('#feed')), await page.textContent('#feed'));
+  assert((await page.textContent('#count')) === '1', await page.textContent('#count'));
+  await page.close();
+});
+
+await t('リハーサル用の投稿が流れる', async () => {
+  const tR = 'stage-rehearsal';
+  const sp = await actor(tR);
+  await sp.createTrack({ name: 'Rehearsal' });
+  const { page } = await open(`${HOST}/stage.html?emu=1&track=${tR}`);
+  await page.waitForFunction(
+    () => /受付中/.test(document.getElementById('stateText')?.textContent ?? ''),
+    { timeout: 20000 });
+  await sleep(500);
+  await page.fill('#testText', 'リハーサル');
+  await page.click('#testSend');
+  await page.waitForFunction(
+    () => /リハーサル/.test(document.getElementById('feed')?.textContent ?? ''), { timeout: 20000 });
+  await page.close();
+});
+
+await t('取り込んだスライドがプロジェクタ側の窓に渡り、弾幕が重なる（通し）', async () => {
+  const tP = 'stage-project';
+  const sp = await actor(tP);
+  await sp.createTrack({ name: 'Project Track' });
+
+  const { page, errors, ctx } = await openCapturing(`${HOST}/stage.html?emu=1&track=${tP}`);
+  await page.waitForFunction(
+    () => /受付中/.test(document.getElementById('stateText')?.textContent ?? ''),
+    { timeout: 20000 });
+
+  // ① スライドを取り込む
+  await page.evaluate(() => document.getElementById('pick').click());
+  await page.waitForFunction(() => window.__stage?.hasSlide === true, { timeout: 20000 });
+  assert(await page.getAttribute('#s1', 'data-state') === 'done', '手順1が完了になっていない');
+
+  // ② プロジェクタに出す
+  const [proj] = await Promise.all([
+    ctx.waitForEvent('page'),
+    page.evaluate(() => document.getElementById('project').click()),
+  ]);
+  const projErrs = [];
+  proj.on('pageerror', (e) => projErrs.push(String(e.message)));
+  proj.on('console', (m) => { if (m.type() === 'error') projErrs.push(m.text()); });
+  await proj.waitForLoadState('load');
+  try {
+    await proj.waitForFunction(
+      () => /Project Track/.test(document.getElementById('hud')?.textContent ?? ''),
+      { timeout: 25000 });
+  } catch (e) {
+    throw new Error(`投影窓が繋がらない url=${proj.url()} hud=${await proj.textContent('#hud').catch(() => '?')} errs=${projErrs.join(' / ')}`);
+  }
+
+  // ③ 全画面にするボタンが出ている（親からは全画面にできないため）
+  assert(await proj.isVisible('#cover'), '全画面ボタンが出ていない');
+
+  // 親から渡した映像が下敷きとして描かれている
+  await proj.waitForFunction(() => document.getElementById('slide').videoWidth > 0, { timeout: 25000 });
+  await sleep(600);
+  const n = await proj.evaluate(() => {
+    const c = document.getElementById('stage'), x = c.getContext('2d');
+    const d = x.getImageData(0, 0, c.width, c.height).data;
+    let k = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 0) k++;
+    return k;
+  });
+  assert(n > 100000, `スライドが渡っていない: ${n}`);
+
+  // ④ 投稿がプロジェクタ側に流れる
+  const po = await actor(tP);
+  await po.post('投影に重なる');
+  await proj.waitForFunction(() => (window.__overlay?.flow?.activeCount ?? 0) > 0, { timeout: 25000 });
+
+  assert(errors.length === 0, `エラー: ${errors.join(' / ')}`);
+  await ctx.close();
+});
+
+await t('取り込んだ映像の余白を切り取って広く映す', async () => {
+  const { page, ctx } = await openCapturing(`${HOST}/overlay.html?emu=1&track=${TRACK}`);
+  await page.waitForFunction(
+    () => /Browser Track/.test(document.getElementById('hud')?.textContent ?? ''),
+    { timeout: 20000 });
+  await page.evaluate(() => document.getElementById('pick').click());
+  await page.waitForFunction(() => document.getElementById('slide').videoWidth > 0, { timeout: 20000 });
+  await sleep(1600);   // 余白の測り直しは1秒に1回
+
+  const r = await page.evaluate(() => ({
+    crop: window.__overlay.cropRect,
+    vw: document.getElementById('slide').videoWidth,
+    vh: document.getElementById('slide').videoHeight,
+    auto: window.__overlay.autoCrop,
+  }));
+  assert(r.auto === true, '自動切り取りが無効になっている');
+  assert(r.crop !== null, '余白を測っていない');
+  // 擬似ソースは余白が無いので、枠いっぱいが返るのが正しい
+  assert(r.crop.width === r.vw && r.crop.height === r.vh,
+    `余白が無いのに切っている: ${JSON.stringify(r.crop)} vs ${r.vw}x${r.vh}`);
+  await ctx.close();
+});
+
+await t('自動切り取りは切れる', async () => {
+  const { page, ctx } = await openCapturing(`${HOST}/overlay.html?emu=1&track=${TRACK}`);
+  await page.waitForFunction(
+    () => /Browser Track/.test(document.getElementById('hud')?.textContent ?? ''),
+    { timeout: 20000 });
+  await page.evaluate(() => document.getElementById('pick').click());
+  await page.waitForFunction(() => document.getElementById('slide').videoWidth > 0, { timeout: 20000 });
+  await sleep(1600);
+  await page.evaluate(() => window.__overlay.setAutoCrop(false));
+  await sleep(300);
+  assert(await page.evaluate(() => window.__overlay.cropRect) === null, '切り取りが残っている');
+  assert(await page.evaluate(() => window.__overlay.autoCrop) === false);
+  await ctx.close();
+});
+
 await browser.close();
+await capBrowser.close();
 for (const [st, name, msg] of rows) console.log(`  ${st} ${name}${msg ? '\n         -> ' + msg : ''}`);
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
