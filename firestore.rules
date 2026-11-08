@@ -6,87 +6,168 @@ service cloud.firestore {
     // 匿名認証でも authed() は true。観客にも匿名サインインを入れる前提。
     function authed() { return request.auth != null; }
 
-    match /tracks/{trackId} {
+    /**
+     * 匿名ではない人。運営だけがこれを満たす。
+     *
+     * イベントとトラックは当日まで残るものなので、端末を変えたら失う匿名のままでは
+     * 運用に耐えない。作る・消すは本人確認できる人に限る。
+     * 開始や停止は登壇者（匿名＋合言葉）も行うので、そちらは authed() のまま。
+     */
+    function signedIn() {
+      return authed() && request.auth.token.firebase.sign_in_provider != 'anonymous';
+    }
 
-      function trackPath() { return /databases/$(db)/documents/tracks/$(trackId); }
+    match /events/{eventId} {
 
-      // トラックを操作できるのは、作成者本人か、引き継ぎコードで登録された運用者。
-      function isOperator() {
+      function eventPath() { return /databases/$(db)/documents/events/$(eventId); }
+
+      // イベントを操作できるのは、作成者本人か、引き継ぎコードで登録された運用者。
+      function isEventOperator() {
         return authed() && (
           resource.data.ownerUid == request.auth.uid ||
-          exists(/databases/$(db)/documents/tracks/$(trackId)/operators/$(request.auth.uid))
+          exists(/databases/$(db)/documents/events/$(eventId)/operators/$(request.auth.uid))
         );
       }
 
       allow get: if authed();
-      allow list: if authed() && request.query.limit <= 20;
+      allow list: if authed() && request.query.limit <= 50;
 
-      allow create: if authed()
-        && request.resource.data.keys().hasOnly(
-             ['name','title','speaker','sessionStartedAt','stopped','ownerUid','createdAt'])
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['name','heldOn','ownerUid','createdAt'])
         && request.resource.data.ownerUid == request.auth.uid
         && request.resource.data.name is string
         && request.resource.data.name.size() > 0
-        && request.resource.data.name.size() <= 40
-        && request.resource.data.stopped == false
+        && request.resource.data.name.size() <= 60
         && request.resource.data.createdAt == request.time;
 
-      // ownerUid と createdAt は後から書き換えられない。触れるのは運用4フィールドだけ。
-      allow update: if isOperator()
+      allow update: if signedIn() && isEventOperator()
         && request.resource.data.ownerUid == resource.data.ownerUid
         && request.resource.data.createdAt == resource.data.createdAt
-        && request.resource.data.diff(resource.data).affectedKeys()
-             .hasOnly(['title','speaker','sessionStartedAt','stopped']);
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name','heldOn']);
 
-      allow delete: if authed() && resource.data.ownerUid == request.auth.uid;
+      allow delete: if signedIn() && resource.data.ownerUid == request.auth.uid;
 
       // 引き継ぎコードの置き場。誰からも読めない。Rules の get() だけが参照する。
       match /private/{doc} {
         allow read: if false;
         allow write: if authed()
-          && get(trackPath()).data.ownerUid == request.auth.uid;
+          && get(eventPath()).data.ownerUid == request.auth.uid;
       }
 
-      // スタッフ運用時、登壇者がコードを提示して自分を運用者に登録する。
+      // 運営を手伝う人。イベント単位で登録する。
       match /operators/{uid} {
         allow read: if false;
         allow create: if authed()
           && uid == request.auth.uid
           && request.resource.data.keys().hasOnly(['code'])
           && request.resource.data.code ==
-               get(/databases/$(db)/documents/tracks/$(trackId)/private/handoff).data.code;
+               get(/databases/$(db)/documents/events/$(eventId)/private/handoff).data.code;
         allow update, delete: if false;
       }
 
-      match /comments/{commentId} {
+      match /tracks/{trackId} {
+
+        function trackPath() {
+          return /databases/$(db)/documents/events/$(eventId)/tracks/$(trackId);
+        }
+
+        /** 運営。イベントの持ち主と、手伝う人。 */
+        function isEventStaff() {
+          return authed() && (
+            get(eventPath()).data.ownerUid == request.auth.uid ||
+            exists(/databases/$(db)/documents/events/$(eventId)/operators/$(request.auth.uid))
+          );
+        }
+
+        /** そのトラックの登壇者。引き継ぎコードで登録された人。 */
+        function isTrackSpeaker() {
+          return authed() &&
+            exists(/databases/$(db)/documents/events/$(eventId)/tracks/$(trackId)/operators/$(request.auth.uid));
+        }
+
         allow get: if authed();
         allow list: if authed() && request.query.limit <= 50;
 
-        allow create: if authed()
-          && request.resource.data.keys().hasOnly(['text','createdAt'])
-          && request.resource.data.text is string
-          && request.resource.data.text.size() > 0
-          && request.resource.data.text.size() <= 60
-          && request.resource.data.createdAt == request.time
-          && get(trackPath()).data.stopped == false
-          // 同じバッチで posters/{uid} も更新されていることを要求する = レート制限の強制
-          && getAfter(/databases/$(db)/documents/tracks/$(trackId)/posters/$(request.auth.uid))
-               .data.lastPostAt == request.time;
+        allow create: if signedIn()
+          && get(eventPath()).data.ownerUid == request.auth.uid
+          && request.resource.data.keys().hasOnly(
+               ['name','sessionStartedAt','stopped','live','createdAt'])
+          && request.resource.data.name is string
+          && request.resource.data.name.size() > 0
+          && request.resource.data.name.size() <= 40
+          && request.resource.data.stopped == false
+          // 作った直後は「開始前」。演題が入っているかどうかでは判定できない
+          // （運営が先に入れておくので）。
+          && request.resource.data.live == false
+          && request.resource.data.createdAt == request.time;
 
-        allow update, delete: if false;
-      }
+        /*
+         * createdAt は後から書き換えられない。演題は持たない。
+         *
+         * 停止（stopped）は運営だけが触れる。荒らしへの対処なので、
+         * 運営が止めたものを登壇者が戻せてはいけない。
+         * 登壇者が触れるのは自分の登壇の開始と終了（sessionStartedAt と live）だけ。
+         */
+        allow update: if request.resource.data.createdAt == resource.data.createdAt && (
+          (isEventStaff() && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['sessionStartedAt','stopped','live']))
+          ||
+          (isTrackSpeaker() && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['sessionStartedAt','live']))
+        );
 
-      // 投稿者ごとの最終投稿時刻。2秒に1回しか更新できない。
-      match /posters/{uid} {
-        allow read: if false;
-        allow create: if authed() && uid == request.auth.uid
-          && request.resource.data.keys().hasOnly(['lastPostAt'])
-          && request.resource.data.lastPostAt == request.time;
-        allow update: if authed() && uid == request.auth.uid
-          && request.resource.data.keys().hasOnly(['lastPostAt'])
-          && request.resource.data.lastPostAt == request.time
-          && request.time > resource.data.lastPostAt + duration.value(2, 's');
-        allow delete: if false;
+        allow delete: if signedIn() && get(eventPath()).data.ownerUid == request.auth.uid;
+
+        // 登壇者に渡すリンクの合言葉。誰からも読めない。
+        match /private/{doc} {
+          allow read: if false;
+          allow write: if authed()
+            && get(eventPath()).data.ownerUid == request.auth.uid;
+        }
+
+        match /operators/{uid} {
+          allow read: if false;
+          allow create: if authed()
+            && uid == request.auth.uid
+            && request.resource.data.keys().hasOnly(['code'])
+            && request.resource.data.code ==
+                 get(/databases/$(db)/documents/events/$(eventId)/tracks/$(trackId)/private/handoff).data.code;
+          allow update, delete: if false;
+        }
+
+        match /comments/{commentId} {
+          allow get: if authed();
+          allow list: if authed() && request.query.limit <= 50;
+
+          allow create: if authed()
+            && request.resource.data.keys().hasOnly(['text','createdAt'])
+            && request.resource.data.text is string
+            && request.resource.data.text.size() > 0
+            && request.resource.data.text.size() <= 60
+            && request.resource.data.createdAt == request.time
+            // 登壇中でなければ受け付けない。
+            // 終了（live=false）と停止（stopped=true）は別の操作で、どちらでも止まる。
+            && get(trackPath()).data.live == true
+            && get(trackPath()).data.stopped == false
+            // 同じバッチで posters/{uid} も更新されていることを要求する = レート制限の強制
+            && getAfter(/databases/$(db)/documents/events/$(eventId)/tracks/$(trackId)/posters/$(request.auth.uid))
+                 .data.lastPostAt == request.time;
+
+          allow update, delete: if false;
+        }
+
+        // 投稿者ごとの最終投稿時刻。2秒に1回しか更新できない。
+        match /posters/{uid} {
+          allow read: if false;
+          allow create: if authed() && uid == request.auth.uid
+            && request.resource.data.keys().hasOnly(['lastPostAt'])
+            && request.resource.data.lastPostAt == request.time;
+          allow update: if authed() && uid == request.auth.uid
+            && request.resource.data.keys().hasOnly(['lastPostAt'])
+            && request.resource.data.lastPostAt == request.time
+            && request.time > resource.data.lastPostAt + duration.value(2, 's');
+          allow delete: if false;
+        }
       }
     }
   }

@@ -29,6 +29,19 @@
           }
         ]
       }
+    ],
+    "rewrites": [
+      {
+        "source": "/e/**",
+        "destination": "/tracks.html"
+      }
+    ],
+    "redirects": [
+      {
+        "source": "/vendor/lib.js",
+        "destination": "/vendor/entry.js",
+        "type": 302
+      }
     ]
   },
   "emulators": {
