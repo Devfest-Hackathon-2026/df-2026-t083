@@ -1,13 +1,10 @@
 // 投稿ページ。観客が暗い客席でスマホから使う。
 //
 // 送れないときに無言にしないことが、このページでいちばん大事。
-// もうひとつは「届いたかどうか」。送った先はこの端末からは見えないので、
-// 流れているコメントをそのまま下に出して、自分の1件が入ったことを見せる。
+// 「届いたかどうか」は、送れた1件が入力欄から左へ抜ける動きで示す。
+// bus.post() は書き込みが通ったときだけ返るので、動いた時点で届いている。
 import { start } from './app.mjs';
 import { createBus, MAX_TEXT, COOLDOWN_MS } from './bus.mjs';
-
-/** 画面に残す、いま流れているコメントの件数。多いと自分の1件が埋もれる。 */
-const ROOM_SHOWN = 6;
 
 /**
  * 送れない理由を観客の言葉にする。
@@ -63,21 +60,6 @@ export async function createPoster({ eventId, trackId, now = () => Date.now() } 
     refresh();
   }, () => { el('track').textContent = '読み取れません'; note(reasonText('denied'), 'bad'); });
 
-  /**
-   * いま流れているコメント。
-   *
-   * 送った先は手元からは見えない。投影を見れば分かるが、客席の後ろからでは
-   * 流れ切ったあとのことも多い。「届いた」をこの端末の中で確かめられるようにする。
-   */
-  const room = el('room');
-  bus.watchComments((c) => {
-    const li = document.createElement('li');
-    // コメントは外から来る。textContent で入れる。
-    li.textContent = c.text;
-    room.prepend(li);
-    while (room.children.length > ROOM_SHOWN) room.lastElementChild.remove();
-    el('roomEmpty').classList.add('hidden');
-  }, () => { /* 流れているものが出ないだけ。送ることはできるので黙って続ける */ });
 
   /**
    * 送れる状態かを見直す。

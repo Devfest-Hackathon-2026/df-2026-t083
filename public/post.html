@@ -62,19 +62,6 @@
   #note[data-kind="wait"] { color: var(--warn); }
   #note[data-kind="bad"]  { color: var(--bad); }
 
-  /* いま流れているもの。自分の1件が届いたことが、ここで分かる。 */
-  /* 下端に寄せない。あいだに大きな空白があると、関係の無いものに見える。 */
-  .room { margin-top: .9rem; padding-top: 1.1rem; border-top: 1px solid var(--line); }
-  .room h2 { font-size: var(--t-xs); font-weight: 700; color: var(--muted); }
-  #room { list-style: none; margin: .5rem 0 0; padding: 0; display: grid; gap: 1px;
-          background: var(--line); border: 1px solid var(--line); border-radius: var(--radius);
-          overflow: hidden; }
-  #room li { background: var(--surface); padding: .55rem .8rem; font-size: var(--t-md);
-             word-break: break-word; }
-  /* いちばん新しい1件。送った直後に、自分のものがここに出る。 */
-  #room li:first-child { background: var(--good-bg); font-weight: 600; }
-  #room:empty { display: none; }
-  #roomEmpty { margin: .5rem 0 0; font-size: var(--t-sm); color: var(--muted); }
 </style>
 
 <main>
@@ -99,11 +86,6 @@
   <!-- 状態が変わったことを読み上げる。番号だけでなく文として伝える。 -->
   <p id="note" data-kind="" role="status" aria-atomic="true">送るとスライドの上に流れます</p>
 
-  <section class="room">
-    <h2>スライドに流れているコメント</h2>
-    <ul id="room"></ul>
-    <p id="roomEmpty">まだ誰も送っていません。最初の1件になれます。</p>
-  </section>
 </main>
 
 <script type="module">
