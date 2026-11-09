@@ -67,13 +67,17 @@ function deliverTrack(target) {
 
 function createSetupWindow() {
   setupWin = new BrowserWindow({
-    width: 520, height: 460, resizable: false,
+    // 操作をボタンにしたぶん縦に伸びる。resizable: false なので、
+    // 足りないと「終了する」が窓の外に出たまま掴めなくなる。
+    width: 520, height: 560, resizable: false,
     title: '弾幕スライド',
     backgroundColor: '#0b0b0f',
     webPreferences: { preload: path.join(__dirname, 'preload.cjs') },
   });
   setupWin.loadFile(path.join(__dirname, 'setup.html'));
   setupWin.webContents.once('did-finish-load', () => {
+    // 読み込みの前に送っても届かない。開いた時点の現在値をここで渡す。
+    sendClickThrough();
     if (pendingTrack) setupWin.webContents.send('track', pendingTrack);
   });
   setupWin.on('closed', () => { setupWin = null; });
@@ -184,13 +188,36 @@ function keepOnTop() {
   overlayWin.moveTop();
 }
 
+/**
+ * クリックを下に通すかどうかを切り替える。
+ *
+ * 切り替える口がキーとスイッチの2つになるので、値は main に1つだけ置く。
+ * 変えたら設定ウィンドウへ送り返す。送らないと、キーで切り替えたときに
+ * 画面に出ている状態と実際が食い違う。
+ */
+function setClickThrough(on) {
+  clickThrough = !!on;
+  overlayWin?.setIgnoreMouseEvents(clickThrough, { forward: true });
+  sendClickThrough();
+  return clickThrough;
+}
+
+/**
+ * いまの値を設定ウィンドウへ渡す。
+ * 送り先は設定ウィンドウだけ。透過ウィンドウはリモートの弾幕ページを読んでいて
+ * preload を持たせていないので、受け口が無い。
+ */
+function sendClickThrough() {
+  if (setupWin && !setupWin.isDestroyed()) {
+    setupWin.webContents.send('clickThrough', clickThrough);
+  }
+}
+
 function registerShortcuts() {
   const mod = process.platform === 'darwin' ? 'Command' : 'Control';
+  // ボタンでも触れるが、キーは残す。登壇中は手が離せないことがある。
   globalShortcut.register(`${mod}+Shift+X`, () => app.quit());
-  globalShortcut.register(`${mod}+Shift+C`, () => {
-    clickThrough = !clickThrough;
-    overlayWin?.setIgnoreMouseEvents(clickThrough, { forward: true });
-  });
+  globalShortcut.register(`${mod}+Shift+C`, () => setClickThrough(!clickThrough));
 }
 
 // 二重起動させない。リンクを開くたびに新しいアプリが立つと、重なりが二重になる。
@@ -228,6 +255,8 @@ app.whenReady().then(() => {
   });
 
   ipcMain.handle('stop', () => { overlayWin?.close(); setupWin?.show(); return { ok: true }; });
+  ipcMain.handle('clickThrough', (_e, on) => setClickThrough(on));
+  ipcMain.handle('quit', () => { app.quit(); return { ok: true }; });
   ipcMain.handle('openExternal', (_e, url) => shell.openExternal(url));
   ipcMain.handle('origin', () => ORIGIN);
 

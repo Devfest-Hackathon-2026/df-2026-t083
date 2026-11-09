@@ -118,6 +118,30 @@ test('画面が2枚以上あるときは投影先（メインでないほう）�
   assert.ok(!r.onPrimary, 'メイン画面に出している');
 });
 
+test('クリックを通すかどうかの現在値が main から届く', async () => {
+  // 値の持ち主は main で、キーからも切り替わる。届いていないと、スイッチが
+  // 実際と逆を指したまま誰も気づけない。data-through は届いた印。
+  await setup.waitForFunction(() => document.body.dataset.through !== undefined, { timeout: 5000 });
+  assert.equal(await setup.getAttribute('body', 'data-through'), '1', '既定は通す');
+  assert.ok(await setup.isChecked('#through'), 'スイッチが入っていない');
+});
+
+test('スイッチを切ると main を通って現在値が返ってくる', async () => {
+  await setup.uncheck('#through');
+  await setup.waitForFunction(() => document.body.dataset.through === '0', { timeout: 5000 });
+  assert.match(await setup.textContent('#throughNow'), /通していない/);
+  // 後の項目のために戻す
+  await setup.check('#through');
+  await setup.waitForFunction(() => document.body.dataset.through === '1', { timeout: 5000 });
+});
+
+test('終了する操作がボタンとして出ている', async () => {
+  // 本当に終わらせると後の項目が回らないので、押せる場所と口があることまで見る。
+  // 終われるかどうかは CHECKLIST.md で人が見る。
+  assert.ok(await setup.isVisible('#quit'), '終了するボタンが無い');
+  assert.ok(await setup.evaluate(() => typeof window.shell.quit === 'function'), '終了の口が無い');
+});
+
 test('終了と切り替えのキーが登録されている', async () => {
   const keys = await app.evaluate(({ globalShortcut }) => ({
     mac: globalShortcut.isRegistered('Command+Shift+X') || globalShortcut.isRegistered('Control+Shift+X'),
