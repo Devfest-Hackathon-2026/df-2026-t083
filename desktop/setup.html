@@ -36,6 +36,19 @@
   .live .dot { width:.5rem; height:.5rem; border-radius:50%; background:var(--good);
                box-shadow:0 0 0 4px rgba(79,211,221,.18); }
 
+  /* 運営のリンクから起動されたとき。貼る欄は引っ込め、受け取った中身を読む形で出す。
+     欄の中に `b52bj39v a` と出ると、自分の貼り間違いにしか見えない。 */
+  .got { display:none; }
+  body[data-got="1"] .paste { display:none; }
+  body[data-got="1"]:not([data-running="1"]) .got { display:block; }
+  .got .say { margin:0 0 .5rem; color:var(--good); font-weight:700; }
+  .kv { display:grid; grid-template-columns:auto 1fr; gap:.15rem .75rem; margin:0;
+        padding:.6rem .75rem; border:1px solid var(--line); border-radius:.5rem;
+        background:var(--surface); }
+  .kv dt { font-size:.75rem; color:var(--muted); }
+  .kv dd { margin:0; font-size:.85rem;
+           font-family:ui-monospace, SFMono-Regular, Menlo, "Courier New", monospace; }
+
   /* クリックを下に通すかどうか。いまどちらなのかを、押す場所そのもので見せる。
      キーでも切り替わるので、状態を文字でも書いておかないと確かめられない。 */
   .sw { display:flex; align-items:center; justify-content:space-between; gap:.75rem;
@@ -69,14 +82,22 @@
 <body>
   <div>
     <h1>弾幕スライド</h1>
-    <p class="say idle">運営から届いたリンクを貼ると、スライドの上に弾幕を流します。</p>
+    <p class="say idle paste">運営から届いたリンクを貼ると、スライドの上に弾幕を流します。</p>
   </div>
 
   <div class="live running"><span class="dot"></span><span id="liveText">流しています</span></div>
 
-  <div class="idle">
+  <div class="idle paste">
     <label for="track">運営からのリンク</label>
     <input id="track" placeholder="https://.../stage.html?e=…&t=…" autocomplete="off" spellcheck="false">
+  </div>
+
+  <div class="got">
+    <p class="say">運営からのリンクを受け取りました。貼る必要はありません。</p>
+    <dl class="kv">
+      <dt>イベント</dt><dd id="gotEvent"></dd>
+      <dt>トラック</dt><dd id="gotTrack"></dd>
+    </dl>
   </div>
 
   <div class="idle">
@@ -116,6 +137,11 @@
   const $ = (id) => document.getElementById(id);
   const msg = (text, kind = '') => { $('msg').textContent = text; $('msg').dataset.kind = kind; };
 
+  // 運営のリンクから渡ってきたトラック。入力欄には入れないので、ここで持つ。
+  let received = null;
+  // 受け取っていれば貼る欄は出ていない。最初に触る場所をそれに合わせる。
+  const focusFirst = () => (received ? $('go') : $('track')).focus();
+
   if (!navigator.platform.startsWith('Mac')) {
     $('k1').textContent = 'Ctrl+Shift+C';
     $('k2').textContent = 'Ctrl+Shift+X';
@@ -130,21 +156,29 @@
       o.selected = ds.length > 1 ? !d.primary : d.primary;
       $('display').append(o);
     }
-    $('track').focus();
+    focusFirst();
   })();
 
   // 運営のリンクから起動されたとき。登壇者に貼らせないための経路。
+  //
+  // 入力欄には差し込まない。欄の中に `b52bj39v a` と並ぶと、受け取れたのではなく
+  // 自分が貼り間違えたように見える。受け取れた事実と、受け取った中身を分けて出す。
   window.shell.onTrack?.((target) => {
-    $('track').value = `${target.eventId} ${target.trackId}`;
-    msg('リンクを受け取りました。あとは流すだけです', 'ok');
+    received = target;
+    $('gotEvent').textContent = target.eventId;
+    $('gotTrack').textContent = target.trackId;
+    document.body.dataset.got = '1';
+    msg('');
     $('go').focus();
   });
 
   async function go() {
+    // 手で貼る経路は変えない。受け取ったぶんも parseTrackId が受け付ける形で渡す。
+    const track = received ? `${received.eventId} ${received.trackId}` : $('track').value;
     $('go').disabled = true;
-    const r = await window.shell.start({ track: $('track').value, displayId: $('display').value });
+    const r = await window.shell.start({ track, displayId: $('display').value });
     $('go').disabled = false;
-    if (!r.ok) { msg(r.reason, 'bad'); $('track').focus(); return; }
+    if (!r.ok) { msg(r.reason, 'bad'); focusFirst(); return; }
     msg('');
     $('liveText').textContent = `${r.trackId} を流しています`;
     document.body.dataset.running = '1';
@@ -178,7 +212,7 @@
     await window.shell.stop();
     document.body.dataset.running = '';
     msg('');
-    $('track').focus();
+    focusFirst();
   });
 </script>
 </body>

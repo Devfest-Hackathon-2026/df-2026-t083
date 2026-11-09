@@ -159,3 +159,29 @@ test('やめると重ねるウィンドウが消えて設定に戻る', async ()
     BrowserWindow.getAllWindows().filter((w) => w.isAlwaysOnTop()).length);
   assert.equal(left, 0, `残っている: ${left}`);
 });
+
+test('リンクから渡ってきたトラックを入力欄に差し込まない', async () => {
+  // 欄の中に `b52bj39v a` と並ぶと、受け取れたのではなく自分が貼り間違えたように
+  // 見える。受け取れた事実と、受け取った中身を分けて出す。
+  await setup.fill('#track', '');
+  await app.evaluate(({ BrowserWindow }) => {
+    const w = BrowserWindow.getAllWindows().find((x) => !x.isAlwaysOnTop());
+    w.webContents.send('track', { eventId: 'b52bj39v', trackId: 'a' });
+  });
+  await setup.waitForFunction(() => document.body.dataset.got === '1', { timeout: 5000 });
+  assert.equal(await setup.inputValue('#track'), '', '入力欄に差し込んでいる');
+  assert.equal(await setup.isVisible('#track'), false, '貼る欄が出たままになっている');
+  assert.equal(await setup.textContent('#gotEvent'), 'b52bj39v');
+  assert.equal(await setup.textContent('#gotTrack'), 'a');
+});
+
+test('受け取ったリンクは貼らずにそのまま流し始められる', async () => {
+  // 手で貼る経路は変えていないので、受け取ったぶんも同じ入口を通る
+  await setup.click('#go');
+  await setup.waitForFunction(
+    () => document.body.dataset.running === '1', { timeout: 10000 });
+  assert.match(await setup.textContent('#liveText'), /^a を/);
+  await setup.click('#halt');
+  await setup.waitForFunction(
+    () => document.body.dataset.running !== '1', { timeout: 10000 });
+});
