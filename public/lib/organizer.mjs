@@ -1,14 +1,25 @@
-// 運営者の画面。イベントを作り、トラックを並べ、登壇者にリンクを配る。
+// 運営者の画面。2つの面に分かれる。
 //
-// 事前に落ち着いて使う画面なので、一覧性と編集のしやすさを優先する。
+//   一覧（e なし）… 「今日」の受付の開け閉め。当日その場で押す操作だけ
+//   詳細（e つき）… 配り物の準備。QR とリンク、トラックの出し入れ
+//
+// 分けているのは、同じ日に2つイベントが走ると当日の操作が届かなくなるため。
+// 1つの詳細ページに混ぜていると、運営はまず「どのイベントか」を選ばされ、
+// 開いた先には当日使わない配り物が並ぶ。止めたいときに止められない。
 // 弾幕そのものやコメントの中身は出さない。運営が見たいのは「配れているか」だけ。
 import { watchOrganizer, signInOrganizer, signOutOrganizer } from './app.mjs';
 import { createEventBus, createBus } from './bus.mjs';
 import { QRCode } from '../vendor/entry.js';
 import {
   newEventId, newTrackId, newHandoffCode, slugFromName,
-  stageUrlFor, postUrlFor, eventUrlFor, shortUrl, formatDate, withEnv, nextTrackName,
+  stageUrlFor, postUrlFor, eventUrlFor, formatDate, withEnv, nextTrackName,
 } from './ids.mjs';
+
+/** 今日の日付。「今日」の判定と見出しで同じものを使う。 */
+const todayIso = () => new Date().toISOString().slice(0, 10);
+
+/** 受付中か。stopped が無いものも受付中として扱う（作った直後がこれ）。 */
+const isOpen = (t) => t.stopped !== true;
 
 export async function createOrganizer({ eventId, random = () => Math.random() } = {}) {
   const el = (id) => document.getElementById(id);
@@ -87,25 +98,65 @@ export async function createOrganizer({ eventId, random = () => Math.random() } 
 
   return { kind: 'gate' };
 
-  // --- イベント一覧 -----------------------------------------------------
+  // --- イベント一覧と当日の操作 -----------------------------------------
   function list() {
     el('listView').classList.remove('hidden');
 
+    // 今日のイベントだけはトラックの状態まで購読する。
+    //
+    // 一覧の受付状況は getTracksOnce で一度だけ読んでいる。当日の面はそれでは足りない。
+    // 「止める」を押しても pill が変わらなければ、押せたのかどうかが分からない。
+    const liveTracks = new Map();   // eventId → いま届いているトラック
+    const watching = new Map();     // eventId → 購読を止める関数
+    let evRows = [];                // 一覧に出すイベント（トラック数つき）
+
+    /** 今日のイベントは、受付の数も「いま」のものを使う。同じ画面に古い数字を並べない。 */
+    const withLive = (ev) => {
+      const live = liveTracks.get(ev.id);
+      return live
+        ? { ...ev, trackCount: live.length, openCount: live.filter(isOpen).length }
+        : ev;
+    };
+    const repaint = () => {
+      paintList(evRows.map(withLive));
+      paintToday(evRows.filter((ev) => ev.heldOn === todayIso()), liveTracks);
+    };
+
+    /** 今日のイベントの購読を、届いた一覧に合わせる。 */
+    function syncToday(rows) {
+      const want = new Set(rows.filter((ev) => ev.heldOn === todayIso()).map((ev) => ev.id));
+      for (const [id, stop] of watching) {
+        if (want.has(id)) continue;
+        stop();
+        watching.delete(id);
+        liveTracks.delete(id);
+      }
+      for (const id of want) {
+        if (watching.has(id)) continue;
+        watching.set(id, events.watchTracks(id, (tracks) => {
+          liveTracks.set(id, tracks);
+          repaint();
+        }, (e) => fail(`トラックを読めない: ${e.code ?? e.message}`)));
+      }
+    }
+
     const unwatch = events.watchMyEvents(async (rows) => {
+      // 件数を数える前に購読を始める。当日の面は先に出るほうがいい。
+      syncToday(rows);
       // トラック数は一覧には入っていないので、イベントごとに数える
       const withCounts = await Promise.all(rows.map(async (ev) => {
         try {
           const snap = await events.getTracksOnce(ev.id);
           const tracks = snap.docs.map((d) => d.data());
-          return { ...ev, trackCount: tracks.length,
-            openCount: tracks.filter((t) => t.stopped !== true).length };
+          return { ...ev, trackCount: tracks.length, openCount: tracks.filter(isOpen).length };
         } catch (e) {
           // 握りつぶすと「—」が出るだけで原因が見えない
           fail(`トラック数を数えられない: ${e.code ?? e.message}`);
           return { ...ev, trackCount: null, openCount: 0 };
         }
       }));
-      paintList(withCounts);
+      evRows = withCounts;
+      repaint();
     }, (e) => fail(`イベントを読めない: ${e.code ?? e.message}`));
 
     el('createEvent').addEventListener('click', async () => {
@@ -127,11 +178,18 @@ export async function createOrganizer({ eventId, random = () => Math.random() } 
     // Enter では作らない。押し間違いでイベントが増えると消す手間になる。
     el('newEventName').focus();
 
-    return { kind: 'list', stop: () => unwatch?.() };
+    return {
+      kind: 'list',
+      stop: () => {
+        unwatch?.();
+        for (const stop of watching.values()) stop();
+        watching.clear();
+      },
+    };
   }
 
   /** 開催日で「これから」と「終わった」に分ける。日付が無いものは「これから」に置く。 */
-  function splitByDate(rows, today = new Date().toISOString().slice(0, 10)) {
+  function splitByDate(rows, today = todayIso()) {
     const upcoming = [], past = [];
     for (const ev of rows) (ev.heldOn && ev.heldOn < today ? past : upcoming).push(ev);
     upcoming.sort((a, b) => String(a.heldOn ?? '9999').localeCompare(String(b.heldOn ?? '9999')));
@@ -196,13 +254,156 @@ export async function createOrganizer({ eventId, random = () => Math.random() } 
     pastBody.closest('.card').classList.toggle('hidden', past.length === 0);
   }
 
-  // --- イベント詳細 -----------------------------------------------------
+  // --- 当日 -------------------------------------------------------------
+  /**
+   * 今日ひらいているイベントの受付を並べる。
+   *
+   * 今日が無ければ塊ごと出さない。見出しだけが残ると、
+   * 毎日ひらく画面の上端が「今日は何も無い」で埋まる。
+   */
+  function paintToday(todays, liveTracks) {
+    const host = el('today');
+    host.replaceChildren();
+    // トラックが届いていないイベントは出さない。一瞬だけ「トラックがありません」を見せないため。
+    const ready = todays.filter((ev) => liveTracks.has(ev.id));
+    el('todayLane').classList.toggle('hidden', ready.length === 0);
+    el('todayDate').textContent = formatDate(todayIso());
+    for (const ev of ready) host.append(todayCard(ev, liveTracks.get(ev.id)));
+  }
+
+  /** イベント1つぶんの塊。「全部」の操作はこの中だけに効く。 */
+  function todayCard(ev, rows) {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.dataset.event = ev.id;
+
+    const head = document.createElement('div');
+    head.className = 'today-head';
+    const title = document.createElement('h3');
+    title.textContent = ev.name;
+    const hint = document.createElement('span');
+    hint.className = 'hint';
+    hint.textContent = rows.length
+      ? `受付中 ${rows.filter(isOpen).length} / ${rows.length}` : 'トラックがありません';
+
+    // 開けるのと止めるのは対になる操作。片方だけ目立たせると、
+    // 止めるほうが常に画面でいちばん強い要素になってしまう。
+    // 名前を読み上げに入れる。同じ文字のボタンが、イベントの数だけ並ぶ。
+    const acts = document.createElement('span');
+    acts.className = 'acts';
+    const openAll = button('全部で受け付ける', 'btn sm openAll',
+      () => setAll(ev, rows, 'open', openAll), `${ev.name} の全トラックで受け付ける`);
+    const stopAll = button('全部止める', 'btn sm caution stopAll',
+      () => setAll(ev, rows, 'close', stopAll), `${ev.name} の全トラックを止める`);
+    acts.append(openAll, stopAll);
+    head.append(title, hint, acts);
+    card.append(head);
+
+    if (!rows.length) {
+      const p = document.createElement('p');
+      p.className = 'today-empty';
+      p.textContent = '下の一覧からこのイベントを開いて、トラックを足してください。';
+      card.append(p);
+      return card;
+    }
+
+    const scroller = document.createElement('div');
+    scroller.className = 'scroller';
+    const table = document.createElement('table');
+    table.className = 'rows';
+    table.innerHTML = `
+      <caption class="visually-hidden"></caption>
+      <thead><tr>
+        <th scope="col">トラック</th><th scope="col">受付</th>
+        <th scope="col" style="text-align:right">件数</th>
+        <th scope="col">受付の操作</th>
+      </tr></thead>
+      <tbody></tbody>`;
+    // イベント名は運営が打った文字。組み立てた HTML には混ぜない。
+    table.querySelector('caption').textContent = `${ev.name} のトラックと受付`;
+    const body = table.querySelector('tbody');
+
+    for (const t of rows) {
+      const tr = document.createElement('tr');
+      const name = cell(tr);
+      name.style.fontWeight = '700';
+      name.textContent = t.name;
+      cell(tr).append(statePill(t));
+      const count = cell(tr);
+      count.className = 'count';
+      count.textContent = '—';
+      countComments(ev.id, t, count);
+      const act = cell(tr);
+      act.className = 'link';
+      act.append(guardButton(ev.id, t));
+      body.append(tr);
+    }
+    scroller.append(table);
+    card.append(scroller);
+    return card;
+  }
+
+  /**
+   * そのイベントのトラックをまとめて開ける／止める。
+   *
+   * 日付ではなくイベントで区切る。同じ日に2つ走っているとき、
+   * 日付でまとめると関係ないイベントの受付まで閉じてしまう。
+   */
+  async function setAll(ev, rows, kind, btn) {
+    if (!rows.length) { fail('トラックがありません'); return; }
+    btn.disabled = true;
+    try {
+      await Promise.all(rows.map((t) => {
+        const bus = createBus(sdk, { db, eventId: ev.id, trackId: t.id, uid });
+        return kind === 'open' ? bus.open() : bus.close();
+      }));
+      say(kind === 'open'
+        ? `${ev.name} の全トラックで投稿を受け付けます`
+        : `${ev.name} の全トラックの投稿を止めました`, 'ok');
+    } catch (e) {
+      fail(kind === 'open'
+        ? `開けられない: ${e.code ?? e.message}`
+        : `止められない: ${e.code ?? e.message}`);
+    } finally {
+      // 成功すれば購読が届いて塊ごと描き直る。外れたボタンに触っても害は無い。
+      btn.disabled = false;
+    }
+  }
+
+  /** 受付中か、そうでないか。状態はこの2つだけ。 */
+  function statePill(t) {
+    const pill = document.createElement('span');
+    if (isOpen(t)) { pill.className = 'pill good'; pill.textContent = '受付中'; }
+    else { pill.className = 'pill bad'; pill.textContent = '停止中'; }
+    return pill;
+  }
+
+  /** 受付の開け閉め。運営だけの操作で、登壇者の画面には押す場所が無い。 */
+  function guardButton(eventId, t) {
+    const bus = () => createBus(sdk, { db, eventId, trackId: t.id, uid });
+    return isOpen(t)
+      ? button('止める', 'btn sm stop', async () => {
+          try { await bus().close(); say(`${t.name} の投稿を止めました`, 'ok'); }
+          catch (e) { fail(`止められない: ${e.code ?? e.message}`); }
+        }, `${t.name} の投稿を止める`)
+      : button('受け付ける', 'btn sm resume', async () => {
+          try { await bus().open(); say(`${t.name} で投稿を受け付けます`, 'ok'); }
+          catch (e) { fail(`開けられない: ${e.code ?? e.message}`); }
+        }, `${t.name} の投稿を受け付ける`);
+  }
+
+  // --- イベント詳細（準備） ---------------------------------------------
+  //
+  // 受付の開け閉めはここに置かない。当日の面（一覧の「今日」）が持つ。
+  // 配り物を見にきた手が、そのまま受付を閉じられる場所にあってはいけない。
   async function detail(id) {
     el('detailView').classList.remove('hidden');
 
     let tracks = [];
     let heldOn = null;
-    let painted = false;
+
+    // 配る URL はイベントの中身に依らない。届くのを待たずに出す。
+    el('evUrl').textContent = eventUrlFor(id);
 
     /**
      * 見出しの下の一行。
@@ -223,7 +424,6 @@ export async function createOrganizer({ eventId, random = () => Math.random() } 
       // 打っている最中に上書きしない
       if (document.activeElement !== el('evNameInput')) el('evNameInput').value = ev.name ?? '';
       if (document.activeElement !== el('evDateInput')) el('evDateInput').value = ev.heldOn ?? '';
-      if (!painted) { painted = true; paintEventQr(id); }
     }, (e) => fail(`読めない: ${e.code ?? e.message}`));
 
     // 名前と日付はその場で直せる。作り直させない。
@@ -277,47 +477,25 @@ export async function createOrganizer({ eventId, random = () => Math.random() } 
     // Enter では足さない。打ち終わりに Enter を押す癖で増えてしまう。
     el('addTrack').addEventListener('click', () => addTrack(id, tracks));
 
-    // まとめて開ける／止める。当日の朝に1トラックずつ押させない。
-    const allTracks = (fn) => Promise.all(tracks.map((t) =>
-      fn(createBus(sdk, { db, eventId: id, trackId: t.id, uid }))));
-
-    el('openAll').addEventListener('click', async () => {
-      if (!tracks.length) { fail('トラックがありません'); return; }
-      el('openAll').disabled = true;
-      try {
-        await allTracks((b) => b.open());
-        say('全トラックで投稿を受け付けます', 'ok');
-      } catch (e) {
-        fail(`開けられない: ${e.code ?? e.message}`);
-      } finally { el('openAll').disabled = false; }
-    });
-
-    el('stopAll').addEventListener('click', async () => {
-      if (!tracks.length) { fail('トラックがありません'); return; }
-      el('stopAll').disabled = true;
-      try {
-        await allTracks((b) => b.close());
-        say('全トラックの投稿を止めました', 'ok');
-      } catch (e) {
-        fail(`止められない: ${e.code ?? e.message}`);
-      } finally { el('stopAll').disabled = false; }
-    });
-
     el('copyEvUrl').addEventListener('click', () => copy(eventUrlFor(id)));
-    el('printEvQr').addEventListener('click', () =>
-      printQr(el('evQr').innerHTML, el('evName').textContent, eventUrlFor(id),
-        'スマホで読み取ると、トラックを選んでコメントを送れます'));
+    // QR は押したときに作る。画面には出さないので、持っておく理由が無い。
+    el('printEvQr').addEventListener('click', async () => {
+      try {
+        const url = eventUrlFor(id);
+        printQr(await qrSvg(url, 360), el('evName').textContent, url,
+          'スマホで読み取ると、トラックを選んでコメントを送れます');
+      } catch (e) { fail(`QRを作れない: ${e.code ?? e.message}`); }
+    });
 
     return { kind: 'detail', eventId: id, get tracks() { return tracks; } };
   }
 
-  async function paintEventQr(id) {
-    const url = eventUrlFor(id);
-    el('evUrl').textContent = `/e/${id}`;
-    el('evQr').innerHTML = await QRCode.toString(url,
-      { type: 'svg', errorCorrectionLevel: 'M', margin: 1, width: 168 });
-  }
-
+  /**
+   * 準備の表。配るものと、トラックの出し入れだけ。
+   *
+   * 受付の状態も件数も出さない。当日の面が持っている数字をここにも並べると、
+   * どちらを見て判断するのかが決まらない。
+   */
   function paintTracks(eventId, rows) {
     const body = el('tracks');
     body.replaceChildren();
@@ -331,22 +509,10 @@ export async function createOrganizer({ eventId, random = () => Math.random() } 
       name.style.fontWeight = '700';
       name.textContent = t.name;
 
-      // 受付中か、そうでないか。状態はこの2つだけ。
-      const st = cell(tr);
-      const pill = document.createElement('span');
-      if (t.stopped) { pill.className = 'pill bad'; pill.textContent = '停止中'; }
-      else { pill.className = 'pill good'; pill.textContent = '受付中'; }
-      st.append(pill);
-
-      const count = cell(tr);
-      count.className = 'count';
-      count.textContent = '—';
-      countComments(eventId, t, count);
-
       // 渡す相手ごとに分ける。取り違えると、観客に登壇者用の画面を配ることになる。
       const toSpeaker = cell(tr);
       toSpeaker.className = 'link';
-      toSpeaker.append(button('コピー', 'btn sm toSpeaker', async () => {
+      toSpeaker.append(button('リンクをコピー', 'btn sm toSpeaker', async () => {
         try {
           await copy(stageUrlFor(eventId, t.id));
           say(`${t.name} の登壇用リンクをコピーしました`, 'ok');
@@ -360,30 +526,17 @@ export async function createOrganizer({ eventId, random = () => Math.random() } 
       const audRow = document.createElement('div');
       audRow.className = 'seg';
       audRow.append(
-        button('URL', 'btn sm toAudience', async () => {
+        button('URLをコピー', 'btn sm toAudience', async () => {
           await copy(postUrlFor(eventId, t.id));
           say(`${t.name} の投稿URLをコピーしました`, 'ok');
         }, `${t.name} の投稿URLをコピー`),
-        button('QR', 'btn sm toAudience', async () => {
-          const svg = await QRCode.toString(postUrlFor(eventId, t.id),
-            { type: 'svg', errorCorrectionLevel: 'M', margin: 2, width: 360 });
-          printQr(svg, t.name, postUrlFor(eventId, t.id), 'スマホで読み取るとコメントを送れます');
-        }, `${t.name} の投稿QRを印刷`));
+        button('QRを作る', 'btn sm toAudience', async () => {
+          try {
+            const url = postUrlFor(eventId, t.id);
+            printQr(await qrSvg(url, 360), t.name, url, 'スマホで読み取るとコメントを送れます');
+          } catch (e) { fail(`QRを作れない: ${e.code ?? e.message}`); }
+        }, `${t.name} の投稿QRを作って印刷`));
       toAudience.append(audRow);
-
-      // 受付の開け閉めは運営だけの操作。登壇者には押す場所が無い。
-      const guard = cell(tr);
-      guard.className = 'link';
-      const trackBus = () => createBus(sdk, { db, eventId, trackId: t.id, uid });
-      guard.append(t.stopped
-        ? button('受け付ける', 'btn sm resume', async () => {
-            try { await trackBus().open(); say(`${t.name} で投稿を受け付けます`, 'ok'); }
-            catch (e) { fail(`開けられない: ${e.code ?? e.message}`); }
-          }, `${t.name} の投稿を受け付ける`)
-        : button('止める', 'btn sm stop', async () => {
-            try { await trackBus().close(); say(`${t.name} の投稿を止めました`, 'ok'); }
-            catch (e) { fail(`止められない: ${e.code ?? e.message}`); }
-          }, `${t.name} の投稿を止める`));
 
       const del = cell(tr);
       del.append(button('削除', 'btn sm remove', async () => {
@@ -459,7 +612,7 @@ export async function createOrganizer({ eventId, random = () => Math.random() } 
    * ボタン。
    *
    * label は読み上げ用の名前。表の中では列見出しが意味を持つので、
-   * 見える文字は「コピー」まで削れる。ただしボタンだけを辿る読み方では
+   * 見える文字は「リンクをコピー」まで削れる。ただしボタンだけを辿る読み方では
    * 列見出しが付いてこないので、そのときのために全部の意味を持たせる。
    */
   function button(text, cls, onClick, label = '') {
@@ -474,6 +627,15 @@ export async function createOrganizer({ eventId, random = () => Math.random() } 
     catch { fail('コピーできませんでした'); }
   }
 }
+
+/**
+ * QR の絵。刷る直前にだけ作る。
+ *
+ * 画面に置いておく必要がない。読み取るのは観客で、運営がこの絵から読めることは何も無い。
+ * 誤り訂正は M のまま。紙に刷って貼る前提なので、汚れに強い H まで上げる必要はない。
+ */
+const qrSvg = (url, width) =>
+  QRCode.toString(url, { type: 'svg', errorCorrectionLevel: 'M', margin: 2, width });
 
 /**
  * QR だけの印刷用ウィンドウ。机に置ける紙にするのが目的なので、

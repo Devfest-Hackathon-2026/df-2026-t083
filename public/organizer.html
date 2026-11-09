@@ -87,20 +87,19 @@
   .headrow .who { flex: 0 1 auto; min-width: 0; }
   .headrow .when { flex: 0 0 10rem; }
 
-  /* 配る。運営がこの画面に来る理由そのもの。 */
-  .qrcard { display: flex; gap: 1.1rem; align-items: center; padding: 1rem 1.1rem; flex-wrap: wrap; }
-  /* QR は白地に黒で刷られる。暗い配色でも地を白のまま置く。
-     読み取る側のカメラは、反転した QR を読めないことがある。 */
-  .qrcard .slot { width: 112px; height: 112px; flex: none; display: grid; place-items: center;
-                  border: 1px solid var(--line2); border-radius: 8px; color: #6b7280;
-                  font-size: var(--t-xs); background: #fff; }
-  .qrcard .slot svg { width: 112px; height: 112px; border-radius: 6px; display: block; }
-  .qrcard .body { flex: 1 1 16rem; min-width: 0; }
+  /* 配る。運営がこの画面に来る理由そのもの。
+     画面に QR の絵は出さない。読み取るのは観客で、運営は刷るか URL を送るかしかしない。
+     絵を置くと、運営がこの画面でいちばん要る「どの URL を配るのか」を押しのける。 */
+  .qrcard { padding: 1rem 1.1rem; }
   .qrcard .what { font-weight: 700; }
   .qrcard .why { font-size: var(--t-sm); color: var(--muted); margin: .1rem 0 .55rem; }
+  /* URL はそのまま読んで打つことがある。折り返して全部見せる。 */
+  .qrcard .url { margin-bottom: .55rem; color: var(--ink2); overflow-wrap: anywhere; }
 
-  /* 表の中。色ではなく、まとまりと重さで役割を出す。 */
-  td.count { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink2); }
+  /* 表の中。色ではなく、まとまりと重さで役割を出す。
+     件数は `table.rows td` の指定より強く書く。弱いと app.css の左寄せが勝って、
+     右寄せの列見出しと数字が揃わない。 */
+  table.rows td.count { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink2); }
   td.link { white-space: nowrap; }
   /* 登壇者に渡すものは1つ、観客に配るものは繋がった2つ。
      色だけで分けない。繋がり方が違えば、色が見えなくても取り違えない。 */
@@ -112,15 +111,27 @@
   .btn.resume { color: var(--accent);
                 border-color: color-mix(in oklab, var(--accent) 45%, var(--line2)); }
   .btn.resume:hover { background: var(--good-bg); color: var(--accent); }
-  .btn.remove { color: var(--muted); border-color: transparent; background: transparent;
-                padding: .35rem .5rem; font-weight: 500; }
+  /* 消すボタンは枠線の赤。行の数だけ並ぶので、塗りつぶすと画面が警告だらけになって
+     かえって何も警告しなくなる。灰色では、戻せない操作だと分からない。 */
+  .btn.remove { color: var(--bad); border-color: color-mix(in oklab, var(--bad) 40%, var(--line2)); }
   .btn.remove:hover { background: var(--bad-bg); color: var(--bad); }
-  /* 消す列だけ少し離す。隣の「止める」は戻せる操作で、こちらは戻せない。 */
+  /* 消す列だけ少し離す。隣はリンクを配る操作で、こちらは戻せない。 */
   #tracks td:last-child, .rows thead th:last-child { padding-left: 1.4rem; }
+
+  /* --- 当日 --------------------------------------------------------- */
+  /* イベントごとの塊。見出し行に「全部」の操作を置く。
+     日付全体に効かせない。同じ日に2つ走っていると、片方の運営の
+     「全部止める」が関係ないイベントの受付まで閉じてしまう。 */
+  .today-head { display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap;
+                padding: .8rem 1rem; border-bottom: 1px solid var(--line); }
+  .today-head > h3 { font-size: var(--t-md); font-weight: 700; }
+  .today-head > .hint { font-size: var(--t-sm); color: var(--muted); }
+  .today-head > .acts { margin-left: auto; display: flex; gap: .4rem; flex-wrap: wrap; }
+  .today-empty { margin: 0; padding: .9rem 1rem; font-size: var(--t-sm); color: var(--muted); }
 
   .foot { font-size: var(--t-sm); color: var(--muted); margin: .7rem 0 0; }
 
-  /* 消す操作は離して置く。非常停止の隣だと押し間違える。 */
+  /* 消す操作は離して置く。配り物の操作の隣だと押し間違える。 */
   .danger-zone { margin-top: 4rem; padding: 1rem 1.2rem; border-radius: var(--radius);
     border: 1px solid color-mix(in oklab, var(--bad) 30%, var(--line));
     display: flex; flex-wrap: wrap; gap: 1rem; align-items: center;
@@ -193,6 +204,18 @@
       <p class="lead">イベントを選んでトラックを並べ、登壇者にリンクを配ります。</p>
     </div>
 
+    <!-- 当日の操作。サインインして最初に出る面がこれになる。
+         配り物（QR とリンク）は準備の画面に置き、ここには当日しか使わない
+         受付の開け閉めだけを置く。同じ日に2つイベントが走っていても、
+         操作したいイベントの行がこの面にある。 -->
+    <section id="todayLane" class="lane hidden">
+      <div class="lane-head">
+        <h2>今日</h2>
+        <span class="hint" id="todayDate"></span>
+      </div>
+      <div id="today" class="stack"></div>
+    </section>
+
     <div class="card" style="padding:1rem">
       <div class="row">
         <label class="field grow"><span>イベント名</span>
@@ -247,17 +270,14 @@
     <div class="lane">
       <div class="lane-head"><h2>観客に配る</h2></div>
       <div class="card qrcard">
-        <div class="slot" id="evQr">QR</div>
-        <div class="body">
-          <div class="what">チラシ用QR（イベント全体）</div>
-          <div class="why">
-            読み取ると、どのトラックに送るかを観客が選びます。1枚だけ刷れば足ります。
-          </div>
-          <div class="row tight">
-            <button id="printEvQr" class="btn sm">印刷する</button>
-            <button id="copyEvUrl" class="btn sm">URLをコピー</button>
-            <span class="mono muted" id="evUrl">—</span>
-          </div>
+        <div class="what">チラシ用QR（イベント全体）</div>
+        <div class="why">
+          読み取ると、どのトラックに送るかを観客が選びます。1枚だけ刷れば足ります。
+        </div>
+        <div class="mono url" id="evUrl">—</div>
+        <div class="row tight">
+          <button id="copyEvUrl" class="btn sm">URLをコピー</button>
+          <button id="printEvQr" class="btn sm">QRにして印刷</button>
         </div>
       </div>
     </div>
@@ -266,28 +286,23 @@
       <div class="lane-head">
         <h2>トラック</h2>
         <span class="hint">同時に進行する部屋ごとに1つ。部屋が1つなら Track A だけで足ります。</span>
-        <!-- 開けるのと止めるのは対になる操作。片方だけ目立たせると、
-             止めるほうが常に画面でいちばん強い要素になってしまう。 -->
-        <span class="acts">
-          <button id="openAll" class="btn sm">全部で受け付ける</button>
-          <button id="stopAll" class="btn sm caution">全部止める</button>
-        </span>
       </div>
 
       <div class="card scroller"><table class="rows">
         <caption class="visually-hidden">トラックの一覧</caption>
         <thead><tr>
-          <th scope="col">トラック</th><th scope="col">受付</th>
-          <th scope="col" style="text-align:right">件数</th>
+          <th scope="col">トラック</th>
           <th scope="col">登壇者に渡す</th><th scope="col">観客に配る</th>
-          <th scope="col">受付の操作</th><th><span class="visually-hidden">削除</span></th>
+          <th scope="col"><span class="visually-hidden">削除</span></th>
         </tr></thead>
         <tbody id="tracks"></tbody>
+        <!-- 「トラックを足す」とは書かない。列見出しと「追加」で何が起きるかは分かる。
+             読み上げでは列見出しが付いてこないので、入力欄に名前を持たせる。 -->
         <tfoot><tr>
-          <td colspan="7">
+          <td colspan="4">
             <div class="row">
-              <span class="muted" style="font-size:var(--t-sm)">トラックを足す</span>
-              <input id="newTrackName" maxlength="40" style="flex:0 1 14rem" autocomplete="off">
+              <input id="newTrackName" maxlength="40" style="flex:0 1 14rem" autocomplete="off"
+                     aria-label="足すトラックの名前">
               <button id="addTrack" class="btn primary sm">追加</button>
             </div>
           </td>
@@ -302,11 +317,12 @@
       <p class="foot">
         トラックのURLは当日中変わりません。登壇者が代わってもQRは貼り替え不要です。<br>
         <strong>登壇者に渡す</strong>リンクは、そのトラックの画面を開くだけのもの。合言葉は付かず、登壇者が投稿を止めたり開けたりすることはできません。<br>
-        <strong>観客に配る</strong>QRは部屋の入口用。チラシには上のイベント全体のQRを使います。
+        <strong>観客に配る</strong>QRは部屋の入口用。チラシには上のイベント全体のQRを使います。<br>
+        受付の開け閉めは<a href="./organizer.html">イベント一覧</a>の「今日」から。当日その場で押す操作なので、配り物とは別の面にしています。
       </p>
     </div>
 
-    <!-- 消す操作は非常停止から離して置く。隣り合っていると押し間違える。 -->
+    <!-- 消す操作は配り物の操作から離して置く。隣り合っていると押し間違える。 -->
     <section class="danger-zone">
       <div>
         <div style="font-weight:700">このイベントを削除する</div>
