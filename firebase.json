@@ -32,6 +32,10 @@
     ],
     "rewrites": [
       {
+        "source": "/",
+        "destination": "/organizer.html"
+      },
+      {
         "source": "/e/**",
         "destination": "/tracks.html"
       }
