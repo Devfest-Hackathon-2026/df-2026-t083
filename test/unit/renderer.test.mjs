@@ -47,8 +47,53 @@ test('描くのは strokeText と fillText だけ（DOM を作らない）', () 
   r.resize(800, 600, 1);
   calls.length = 0;
   r.draw([{ id: 'a', text: 'あ', width: 18, x: 100, y: 52, lane: 1 }]);
-  const kinds = calls.map((c) => c[0]);
+  // 色の設定（set）は Canvas の状態を変えるだけ。描く命令はこの2つしか出さない。
+  const kinds = calls.map((c) => c[0]).filter((k) => k !== 'set');
   assert.deepEqual(kinds, ['clearRect', 'strokeText', 'fillText']);
+});
+
+test('色ごとに塗りと縁を切り替える', () => {
+  const { canvas, calls } = fakeCanvas();
+  const r = new Renderer(canvas);
+  r.resize(800, 600, 1);
+  calls.length = 0;
+  r.draw([
+    { id: 'a', text: 'あか', width: 36, x: 10, y: 0, lane: 0, color: 'red' },
+    { id: 'b', text: 'くろ', width: 36, x: 10, y: 52, lane: 1, color: 'black' },
+  ]);
+  const sets = calls.filter((c) => c[0] === 'set');
+  const fills = sets.filter((c) => c[1] === 'fillStyle').map((c) => c[2]);
+  const strokes = sets.filter((c) => c[1] === 'strokeStyle').map((c) => c[2]);
+  assert.deepEqual(fills, ['#FF0000', '#000000']);
+  // 黒のときだけ縁が白へ反転する
+  assert.match(strokes[0], /0, 0, 0/);
+  assert.match(strokes[1], /255, 255, 255/);
+});
+
+test('同じ色が続くなら設定し直さない', () => {
+  const { canvas, calls } = fakeCanvas();
+  const r = new Renderer(canvas);
+  r.resize(800, 600, 1);
+  calls.length = 0;
+  r.draw([
+    { id: 'a', text: 'あ', width: 18, x: 10, y: 0, lane: 0, color: 'red' },
+    { id: 'b', text: 'い', width: 18, x: 10, y: 52, lane: 1, color: 'red' },
+    { id: 'c', text: 'う', width: 18, x: 10, y: 104, lane: 2, color: 'red' },
+  ]);
+  const fills = calls.filter((c) => c[0] === 'set' && c[1] === 'fillStyle');
+  assert.equal(fills.length, 1);
+});
+
+test('色を持たないコメントは style の色で描く', () => {
+  // 古いコメントと、トップページのデモのような style を指定する呼び出し側のため
+  const { canvas, calls } = fakeCanvas();
+  const r = new Renderer(canvas, { color: '#123456', strokeColor: 'rgba(9, 9, 9, 1)' });
+  r.resize(800, 600, 1);
+  calls.length = 0;
+  r.draw([{ id: 'a', text: 'あ', width: 18, x: 10, y: 0, lane: 0 }]);
+  const sets = calls.filter((c) => c[0] === 'set');
+  assert.equal(sets.find((c) => c[1] === 'fillStyle')?.[2], '#123456');
+  assert.equal(sets.find((c) => c[1] === 'strokeStyle')?.[2], 'rgba(9, 9, 9, 1)');
 });
 
 test('縁取りを先に描いてから本体を描く', () => {

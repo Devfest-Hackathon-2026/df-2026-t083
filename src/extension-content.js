@@ -185,7 +185,8 @@ async function main() {
     received++;
     // 最初の1件が届いたら、出しっぱなしをやめる（投影の邪魔になる）
     if (received === 1 && !pinned) status(`${trackName} · 受付中`);
-    flow.add({ id: c.id, text: c.text, width: renderer.measure(c.text) }, performance.now());
+    flow.add({ id: c.id, text: c.text, color: c.color, width: renderer.measure(c.text) },
+      performance.now());
   }, (e) => { status(`購読できない: ${e.code ?? e.message}`, false); console.warn(e); });
 
   bus.watchTrack((track) => {

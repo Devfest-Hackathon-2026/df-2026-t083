@@ -115,7 +115,8 @@ export function createOverlay({ canvas, hud, video = null, eventId, trackId }) {
     // いま来ているコメントが見えなくなる。
     unwatchComments = bus.watchComments((c, { isBacklog }) => {
       if (isBacklog) { flow.markSeen(c.id); return; }
-      flow.add({ id: c.id, text: c.text, width: renderer.measure(c.text) }, performance.now());
+      flow.add({ id: c.id, text: c.text, color: c.color, width: renderer.measure(c.text) },
+      performance.now());
     }, (e) => fail(`購読できない: ${e.code ?? e.message}`));
 
     unwatchTrack = bus.watchTrack((track) => {

@@ -110,7 +110,18 @@ service cloud.firestore {
           allow list: if authed() && request.query.limit <= 50;
 
           allow create: if authed()
-            && request.resource.data.keys().hasOnly(['text','createdAt'])
+            && request.resource.data.keys().hasOnly(['text','createdAt','color'])
+            // 色は任意。無ければ白として描く。
+            // 古いコメントも、色を持たないクライアントからの投稿もそのまま通る。
+            //
+            // 自由な文字列は受けない。背景と同化する色や読めない色を投げ込まれると、
+            // 運営には止める手段が「そのトラック全体を止める」しか無くなる。
+            // 一覧は public/lib/colors.mjs と同じもの。
+            // 食い違うと画面では選べるのにサーバが弾くので、
+            // scripts/lint-rules.mjs が両者の一致を見張っている。
+            && (!('color' in request.resource.data)
+                || request.resource.data.color in
+                   ['white','red','pink','orange','yellow','green','cyan','blue','purple','black'])
             && request.resource.data.text is string
             && request.resource.data.text.size() > 0
             && request.resource.data.text.size() <= 60

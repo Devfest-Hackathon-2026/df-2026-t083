@@ -405,8 +405,15 @@ await t('登壇者の画面に状態を変える操作が無い', async () => {
   const words = await page.evaluate(() =>
     [...document.querySelectorAll('a, button')].map((b) => b.textContent.trim()).join(' / '));
   assert(!/はじめる|終える|投稿を止める|投稿を受け付ける/.test(words), `操作が残っている: ${words}`);
-  // コメント一覧の側には何も置かない
-  assert(await page.evaluate(() => document.querySelectorAll('main button, main input').length) === 0,
+  // コメント一覧の側には何も置かない。
+  //
+  // 以前は main 全体を見ていた。「どこに流すか」が上バーの隅の箱にあり、
+  // main はコメント一覧だけだったため、それで同じ意味になっていた。
+  // いまは流し方の選択が main の主役なので（登壇前にそれが画面の仕事）、
+  // 見張る範囲をコメント一覧そのものに寄せる。
+  // 守りたいのは「読んでいる最中に押し間違える場所を作らない」ほう。
+  assert(await page.evaluate(() =>
+    document.querySelectorAll('.feedcard button, .feedcard input, .feedcard a').length) === 0,
     'コメント欄に操作がある');
   assert(errors.length === 0, `エラー: ${errors.join(' / ')}`);
   await page.close(); await org.page.close();

@@ -5,6 +5,10 @@
 // bus.post() は書き込みが通ったときだけ返るので、動いた時点で届いている。
 import { start } from './app.mjs';
 import { createBus, MAX_TEXT, COOLDOWN_MS } from './bus.mjs';
+import { COLORS, COLOR_NAMES, COLOR_LABELS, DEFAULT_COLOR, colorCode, strokeFor, inkOn } from './colors.mjs';
+
+/** 選んだ色は端末に残す。同じ人が送るたびに選び直さなくていい。 */
+const HUE_KEY = 'danmaku:color';
 
 /**
  * 送れない理由を観客の言葉にする。
@@ -43,6 +47,33 @@ export async function createPoster({ eventId, trackId, now = () => Date.now() } 
 
   let track = null;
   let timer = 0;
+
+  // --- 色を選ぶ ---------------------------------------------------------
+  let hue = DEFAULT_COLOR;
+  try {
+    const saved = localStorage.getItem(HUE_KEY);
+    if (COLOR_NAMES.includes(saved)) hue = saved;
+  } catch { /* 使えない端末では既定の白のまま */ }
+
+  for (const name of COLOR_NAMES) {
+    const label = document.createElement('label');
+    const radio = document.createElement('input');
+    radio.type = 'radio';
+    radio.name = 'hue';
+    radio.value = name;
+    radio.checked = name === hue;
+    const swatch = document.createElement('span');
+    swatch.textContent = COLOR_LABELS[name];
+    swatch.style.setProperty('--sw', COLORS[name]);
+    // 見本の上の文字。明るさで決める（黒だけ特別扱いすると青で読めない）。
+    swatch.style.setProperty('--swInk', inkOn(name));
+    radio.addEventListener('change', () => {
+      hue = name;
+      try { localStorage.setItem(HUE_KEY, name); } catch { /* 残らないだけ */ }
+    });
+    label.append(radio, swatch);
+    el('hue').append(label);
+  }
 
   bus.watchTrack((t) => {
     track = t;
@@ -116,6 +147,10 @@ export async function createPoster({ eventId, trackId, now = () => Date.now() } 
     ghost.className = 'fly';
     ghost.setAttribute('aria-hidden', 'true');
     ghost.textContent = text;
+    // 飛んでいくものを、スライドに出るのと同じ色で描く
+    ghost.style.color = colorCode(hue);
+    ghost.style.webkitTextStroke = `2px ${strokeFor(hue)}`;
+    ghost.style.paintOrder = 'stroke fill';
     // ラベルの高さは文字の大きさで変わる。入力欄の実際の位置から置く。
     ghost.style.top = `${ta.offsetTop + 10}px`;
     ghost.style.left = `${ta.offsetLeft + 12}px`;
@@ -131,7 +166,7 @@ export async function createPoster({ eventId, trackId, now = () => Date.now() } 
     if (value.trim().length === 0) return;
     el('send').disabled = true;
     try {
-      await bus.post(value);
+      await bus.post(value, hue);
       // 送れたら即空にする。続けて打てることが弾幕の体験なので。
       el('text').value = '';
       fly(value.trim());

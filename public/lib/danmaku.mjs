@@ -69,6 +69,7 @@ export class DanmakuFlow {
       id: comment.id,
       text: comment.text,
       width: comment.width,
+      color: comment.color,
       queuedAt: now,
     };
     if (this.#place(item, now)) return 'placed';
@@ -87,6 +88,7 @@ export class DanmakuFlow {
       id: it.id,
       text: it.text,
       width: it.width,
+      color: it.color,
       x: this.#x(it, now),
       y: this.laneY(it.lane),
       lane: it.lane,

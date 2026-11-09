@@ -93,15 +93,15 @@ npm run deploy        # Hosting と Rules を本番へ
 
 | | |
 |---|---|
-| 純粋ロジック | 76件 |
+| 純粋ロジック | 86件 |
 | 透過シェルの設定 | 27件 |
-| Security Rules | 61件（エミュレータ） |
+| Security Rules | 69件（エミュレータ） |
 | Firestore 境界 | 17件 |
 | 実ブラウザ | 60件 |
 | Chrome 拡張 | 16件 |
 | 本番のインデックスと Rules | 11件 |
 
-ほかに Rules の不変条件ガード26件、秘密情報の履歴スキャン、依存の脆弱性を
+ほかに Rules の不変条件ガード27件、秘密情報の履歴スキャン、依存の脆弱性を
 配信物と開発ツールで基準を分けて見ている。詳しくは [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 Rules のテストには JDK が必要（`brew install openjdk`）。

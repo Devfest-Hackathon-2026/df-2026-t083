@@ -4,6 +4,8 @@
 // public/vendor/entry.js を渡し、テストは npm の firebase/firestore を渡す。
 // こうしないと、ブラウザ向けバンドルを Node から読むことになってテストが書けない。
 
+import { COLOR_NAMES, DEFAULT_COLOR } from './colors.mjs';
+
 /** Rules 側と同じ上限。UI でも同じ値を使う。 */
 export const MAX_TEXT = 60;
 
@@ -12,6 +14,9 @@ export const COOLDOWN_MS = 2000;
 
 /** 購読する件数。Rules の request.query.limit の上限と一致させる。 */
 export const PAGE = 50;
+
+/** 色の一覧は colors.mjs が持つ。Rules にも同じものが書いてある。 */
+export { COLORS, COLOR_NAMES, COLOR_LABELS, DEFAULT_COLOR } from './colors.mjs';
 
 export class PostError extends Error {
   constructor(kind, cause) {
@@ -144,7 +149,9 @@ export function createBus(sdk, { db, eventId, trackId, uid, now = () => Date.now
         // 最初の分だけは古い順に戻す（クエリは新しい順なので）
         if (first) added.reverse();
         for (const c of added) {
-          onComment({ id: c.id, text: c.text, createdAt: c.createdAt }, { isBacklog: first });
+          // 色は後から足した任意フィールド。持たない古いコメントは白になる。
+          onComment({ id: c.id, text: c.text, color: c.color ?? DEFAULT_COLOR, createdAt: c.createdAt },
+            { isBacklog: first });
         }
         first = false;
       }, onError);
@@ -157,15 +164,20 @@ export function createBus(sdk, { db, eventId, trackId, uid, now = () => Date.now
      * getAfter() で同一バッチの posters 更新を要求しているので、この形以外は通らない。
      * posters 側に2秒のクールダウンがあり、片方が落ちればバッチ全体が落ちる。
      */
-    async post(text) {
+    async post(text, color = DEFAULT_COLOR) {
       const t = String(text ?? '').trim();
       if (t.length === 0) throw new PostError('empty');
       if (t.length > MAX_TEXT) throw new PostError('too-long');
       if (observed && stopped) throw new PostError('stopped');
       if (this.cooldownRemaining() > 0) throw new PostError('cooldown');
 
+      // 知らない色名はここで白に倒す。Rules も同じ一覧で弾くが、
+      // サーバに拒まれると理由が permission-denied にまとまってしまい、
+      // 観客には「送れません」としか出せなくなる。
+      const c = COLOR_NAMES.includes(color) ? color : DEFAULT_COLOR;
+
       const b = writeBatch(db);
-      b.set(doc(commentsRef()), { text: t, createdAt: serverTimestamp() });
+      b.set(doc(commentsRef()), { text: t, createdAt: serverTimestamp(), color: c });
       b.set(doc(db, 'events', eventId, 'tracks', trackId, 'posters', uid),
         { lastPostAt: serverTimestamp() });
       try {
