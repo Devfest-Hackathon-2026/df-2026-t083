@@ -81,6 +81,35 @@ function createSetupWindow() {
 }
 
 /**
+ * 設定ウィンドウの退避先。投影先でない画面の真ん中に置く。
+ *
+ * 弾幕を出し始めたあとも、止める手段はこのウィンドウの中にしか無い。
+ * Dock を隠しているので Cmd+Tab でも呼び戻せず、隠してしまうと手が1つも残らない。
+ * 投影先から逃がせば、客席には映らないまま手元で触れる。
+ *
+ * 画面が1枚しか無いときは逃がす先が無いので null を返す。動かさずにスライドの
+ * 全画面へ覆わせ、全画面を切れば出てくる形にする。
+ */
+function setupBoundsAway(displays, onto, size) {
+  const away = (displays ?? []).find((d) => String(d.id) !== String(onto?.id));
+  if (!away) return null;
+  // bounds ではなく workArea。bounds だと Dock やタスクバーの下に潜って掴めない
+  const area = away.workArea ?? away.bounds;
+  return {
+    x: Math.round(area.x + (area.width - size.width) / 2),
+    y: Math.round(area.y + (area.height - size.height) / 2),
+    width: size.width,
+    height: size.height,
+  };
+}
+
+function moveSetupAway(displays, onto) {
+  if (!setupWin || setupWin.isDestroyed()) return;
+  const dest = setupBoundsAway(displays, onto, setupWin.getBounds());
+  if (dest) setupWin.setBounds(dest);
+}
+
+/**
  * 重ねるウィンドウの設定。
  *
  * ここの組み合わせが 貼り方C の本体で、1つ外れるだけで最前面に残らなくなる。
@@ -113,9 +142,19 @@ function overlayWindowOptions(bounds) {
   };
 }
 
-function createOverlayWindow(track, displayId) {
-  const displays = screen.getAllDisplays();
-  const display = displays.find((d) => String(d.id) === String(displayId)) ?? screen.getPrimaryDisplay();
+/**
+ * 弾幕を出す画面。指定が見つからなければメインに落とす。
+ * 投影先を選んだあとにケーブルを抜かれると、選んだ id はもう存在しない。
+ */
+function pickDisplay(displays, displayId, primaryId) {
+  const ds = displays ?? [];
+  return ds.find((d) => String(d.id) === String(displayId))
+    ?? ds.find((d) => String(d.id) === String(primaryId))
+    ?? ds[0]
+    ?? null;
+}
+
+function createOverlayWindow(track, display) {
   const { x, y, width, height } = display.bounds;
 
   overlayWin = new BrowserWindow(overlayWindowOptions({ x, y, width, height }));
@@ -164,7 +203,8 @@ if (!app.requestSingleInstanceLock()) {
 app.on('open-url', (e, url) => { e.preventDefault(); deliverTrack(parseTrackId(url)); });
 
 app.whenReady().then(() => {
-  // Dock に出すとフォーカスを取ってしまう場面があるので隠す
+  // Dock に出すとフォーカスを取ってしまう場面があるので隠す。
+  // 呼び戻す道は、設定ウィンドウを出したままにすることで別に確保している。
   if (process.platform === 'darwin') app.dock?.hide();
 
   ipcMain.handle('displays', () => screen.getAllDisplays().map((d, i) => ({
@@ -176,9 +216,14 @@ app.whenReady().then(() => {
   ipcMain.handle('start', (_e, { track, displayId }) => {
     const target = parseTrackId(track);
     if (!target) return { ok: false, reason: '運営からのリンクを貼ってください' };
+    const displays = screen.getAllDisplays();
+    const onto = pickDisplay(displays, displayId, screen.getPrimaryDisplay().id);
+    if (!onto) return { ok: false, reason: '映せる画面が見つかりません' };
     overlayWin?.close();
-    createOverlayWindow(target, displayId);
-    setupWin?.hide();
+    createOverlayWindow(target, onto);
+    // 設定ウィンドウは隠さない。止めるボタンがこの中にしか無いので、隠すと
+    // 「出すには止める、止めるには出す」になって手が無くなる。
+    moveSetupAway(displays, onto);
     return { ok: true, trackId: target.trackId };
   });
 
@@ -207,4 +252,4 @@ app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(
 app.on('will-quit', () => globalShortcut.unregisterAll());
 
 // テストから中身を確かめられるようにする
-module.exports = { parseTrackId, overlayUrl, overlayWindowOptions, trackFromArgv };
+module.exports = { parseTrackId, overlayUrl, overlayWindowOptions, trackFromArgv, pickDisplay, setupBoundsAway };

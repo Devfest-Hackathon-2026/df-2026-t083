@@ -11,7 +11,8 @@ Module._resolveFilename = function (request, ...rest) {
   if (request === 'electron') return require_.resolve('./electron-stub.cjs');
   return origResolve.call(this, request, ...rest);
 };
-const { parseTrackId, overlayUrl, overlayWindowOptions, trackFromArgv } = require_('../../desktop/main.cjs');
+const { parseTrackId, overlayUrl, overlayWindowOptions, trackFromArgv, pickDisplay, setupBoundsAway }
+  = require_('../../desktop/main.cjs');
 Module._resolveFilename = origResolve;
 
 test('運営のリンクから2つのIDを取り出す', () => {
@@ -137,4 +138,36 @@ test('渡した位置と大きさをそのまま使う', () => {
   assert.equal(o.y, 0);
   assert.equal(o.width, 2560);
   assert.equal(o.height, 1440);
+});
+
+test('弾幕を出す画面は指定されたものを選ぶ', () => {
+  const ds = [{ id: 1 }, { id: 2 }];
+  assert.equal(pickDisplay(ds, '2', 1).id, 2);
+});
+
+test('指定された画面が無ければメインに落とす', () => {
+  // 投影先を選んだあとにケーブルを抜かれると、選んだ id はもう存在しない
+  const ds = [{ id: 1 }, { id: 2 }];
+  assert.equal(pickDisplay(ds, '99', 2).id, 2);
+  assert.equal(pickDisplay([], '1', 1), null);
+});
+
+test('画面が2枚以上なら設定ウィンドウを投影先でない画面へ逃がす', () => {
+  // 止める手段がこのウィンドウの中にしか無いので、客席に映らないところへ出す。
+  // 置き場所は bounds ではなく workArea（Dock やタスクバーの下に潜ると掴めない）。
+  const ds = [
+    { id: 1, bounds: { x: 0, y: 0, width: 1440, height: 900 },
+      workArea: { x: 0, y: 25, width: 1440, height: 875 } },
+    { id: 2, bounds: { x: 1440, y: 0, width: 1920, height: 1080 },
+      workArea: { x: 1440, y: 0, width: 1920, height: 1080 } },
+  ];
+  assert.deepEqual(setupBoundsAway(ds, ds[1], { width: 520, height: 560 }),
+    { x: 460, y: 183, width: 520, height: 560 });
+});
+
+test('画面が1枚なら設定ウィンドウは動かさない', () => {
+  // 逃がす先が無い。スライドの全画面に覆わせ、全画面を切れば出てくる形にする
+  const ds = [{ id: 1, bounds: { x: 0, y: 0, width: 1440, height: 900 } }];
+  assert.equal(setupBoundsAway(ds, ds[0], { width: 520, height: 560 }), null);
+  assert.equal(setupBoundsAway([], null, { width: 520, height: 560 }), null);
 });

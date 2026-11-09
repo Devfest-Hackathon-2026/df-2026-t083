@@ -84,6 +84,15 @@ test('重ねるウィンドウが透過・枠なし・最前面で作られる',
   assert.ok(props.bounds.width > 0 && props.bounds.height > 0, `大きさが変: ${JSON.stringify(props.bounds)}`);
 });
 
+test('弾幕を出し始めても設定ウィンドウは消えない', async () => {
+  // 止める手段はこのウィンドウの中にしか無い。Dock を隠しているので
+  // Cmd+Tab でも呼び戻せず、隠すと「出すには止める、止めるには出す」になる。
+  const shown = await app.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows().filter((w) => !w.isAlwaysOnTop()).map((w) => w.isVisible()));
+  assert.equal(shown.length, 1, `設定ウィンドウが1つでない: ${shown.length}`);
+  assert.ok(shown[0], '設定ウィンドウが隠れている');
+});
+
 test('重ねるウィンドウはどれかの画面をいっぱいに覆う', async () => {
   // 投影先を既定にしているので、メインとは限らない。
   // どれかの画面とぴったり一致していればいい。
