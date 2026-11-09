@@ -4,81 +4,103 @@
 <title>登壇する</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#0b0d12" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#0a0d13" media="(prefers-color-scheme: dark)">
 <link rel="stylesheet" href="./css/app.css">
 <style>
   body { min-height: 100vh; display: flex; flex-direction: column; }
 
-  /* 上バーは登壇中ずっと見える。ここに全部置き、下はコメントだけにする。 */
+  /* 上バーは登壇中ずっと見える。トラック名と受付の状態だけを置く。
+     「どこに流すか」は下の本文が持つ。登壇前はそれが画面の主役になる。 */
   .bar {
     display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
-    padding: .75rem 1.25rem; background: var(--surface); border-bottom: 1px solid var(--line);
+    padding: .7rem 1.25rem; background: var(--surface); border-bottom: 1px solid var(--line);
   }
   .bar .who { min-width: 8rem; }
-  .bar .who .t { font-size: 1.25rem; font-weight: 700; line-height: 1.3; }
-  .bar .who .s { font-size: .8rem; color: var(--muted); }
+  .bar .who .t { font-size: var(--t-xl); font-weight: 700; line-height: 1.25; letter-spacing: -.02em; }
+  .bar .who .s { font-size: var(--t-xs); color: var(--muted); }
   .bar .spacer { flex: 1; }
 
-  /* 箱の中は「見出し＋下の一行」。中身の出し分けは JS がやる。 */
   .lines, #state { display: flex; flex-direction: column; min-width: 0; }
-  .lines .t { font-weight: 700; font-size: .9rem; line-height: 1.35; }
-  .lines .s { font-size: .75rem; color: var(--muted); line-height: 1.4; }
+  .lines .t { font-weight: 700; font-size: var(--t-md); line-height: 1.35; }
+  .lines .s { font-size: var(--t-xs); color: var(--muted); line-height: 1.4; }
   .lines .s:empty { display: none; }
 
   .statebox {
     display: flex; align-items: center; gap: .55rem;
-    padding: .4rem .9rem; border-radius: 8px;
+    padding: .4rem .9rem; border-radius: 999px;
     background: var(--surface2); border: 1px solid var(--line);
   }
-  .statebox .dot { width: .6rem; height: .6rem; border-radius: 50%; background: var(--muted); flex: none; }
-  .statebox[data-kind="live"]    .dot { background: var(--good); box-shadow: 0 0 0 4px var(--good-bg); }
+  .statebox .dot { width: .55rem; height: .55rem; border-radius: 50%; background: var(--muted); flex: none; }
+  .statebox[data-kind="live"]    { background: var(--good-bg); border-color: transparent; }
+  .statebox[data-kind="live"]    .t { color: var(--good); }
+  .statebox[data-kind="live"]    .dot { background: var(--good); }
   .statebox[data-kind="stopped"] { background: var(--bad-bg); border-color: var(--bad); }
-  .statebox[data-kind="stopped"] .dot { background: var(--bad); border-radius: 2px; box-shadow: none; }
+  .statebox[data-kind="stopped"] .dot { background: var(--bad); border-radius: 2px; }
   .statebox[data-kind="stopped"] .t,
   .statebox[data-kind="stopped"] .s { color: var(--bad); }
   .statebox[data-kind="error"] { background: var(--bad-bg); border-color: var(--bad); }
   .statebox[data-kind="error"] .dot { background: var(--bad); }
+  .statebox[data-kind="error"] .t { color: var(--bad); }
 
-  /* 流しているかどうか。登壇前に一度決めたら、あとは見るだけになる。 */
-  .flowbox {
-    display: flex; align-items: center; gap: .75rem; flex-wrap: wrap;
-    padding: .5rem .5rem .5rem .9rem; border-radius: 10px;
-    background: var(--surface); border: 1px solid var(--line);
-  }
-  /* まだ流していない間だけ、ここが画面でいちばん強い */
-  .flowbox[data-state="idle"] { border-color: var(--accent); border-width: 2px; padding: calc(.5rem - 1px) calc(.5rem - 1px) calc(.5rem - 1px) calc(.9rem - 1px); }
-  .flowbox[data-state="live"] { background: var(--surface2); }
-  .flowbox[data-state="live"] .t { color: var(--good); }
-  .flowbox .mark { flex: none; display: grid; place-items: center; width: 1.4rem; height: 1.4rem; }
+  main { flex: 1; width: 100%; max-width: 62rem; margin: 0 auto; padding: 1.5rem 1.25rem 3rem;
+         display: grid; gap: 1.25rem; align-content: start; }
+
+  /* --- どこに流すか ---------------------------------------------------- */
+  /* 登壇前はこれが画面でいちばん大きい。決めることが1つしか無いので、
+     その1つを画面いっぱいに出す。決め終わると1行に畳む。 */
+  .flowbox { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+             padding: 1.1rem 1.2rem; display: grid; gap: 1rem; }
+  .flowbox[data-state="idle"]    { border-color: var(--line2); }
+  /* 流れているあいだは、遠目でも一目で分かる太さにする。
+     この輪郭はこのシステムで唯一の影で、「いま動いている」ものにしか付かない。 */
+  .flowbox[data-state="live"] { background: var(--good-bg); border-color: transparent;
+                                box-shadow: var(--ring-live); }
+  .flowbox .head { display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; }
+  .flowbox .head .lines { flex: 1 1 16rem; }
+  .flowbox .head .t { font-size: var(--t-xl); font-weight: 700; letter-spacing: -.02em; }
+  .flowbox .head .s { font-size: var(--t-md); color: var(--muted); }
+  .flowbox[data-state="live"] .head .t { color: var(--good); }
+  .flowbox[data-state="live"] .head .s { color: var(--ink2); }
+  .flowbox .mark { flex: none; display: grid; place-items: center; width: 1.9rem; height: 1.9rem; }
   .flowbox .mark svg { width: 100%; height: 100%; display: block; }
-  .flowbox .acts { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
-  .flowbox .acts .btn { min-height: 44px; font-size: .88rem; padding: .5rem .9rem; }
-  .flowbox .acts a.plain { font-size: .82rem; white-space: nowrap; }
-  /* 流れているあいだは選択肢を畳む。押し直したい人は「流し方を変える」から */
-  .flowbox[data-state="live"]:not([data-acts="1"]) #flowActs { display: none; }
-  .flowbox:not([data-state="live"]) #flowDone,
-  .flowbox[data-acts="1"] #flowDone { display: none; }
 
-  main { flex: 1; display: block; padding: 1.25rem;
-         max-width: 70rem; width: 100%; margin: 0 auto; }
+  /* 選ぶ材料を出す。どちらが何を要求するかが分からないと選べない。 */
+  .choices { display: grid; gap: .8rem; }
+  @media (min-width: 46rem) { .choices { grid-template-columns: 1fr 1fr; } }
+  .opt { border: 1px solid var(--line); border-radius: var(--radius); padding: .9rem 1rem;
+         display: grid; gap: .3rem; align-content: start; background: var(--surface2); }
+  .opt .k { font-size: var(--t-xs); font-weight: 700; color: var(--muted); }
+  .opt.best .k { color: var(--good); }
+  .opt .t { font-weight: 700; font-size: var(--t-lg); letter-spacing: -.01em; }
+  .opt .s { font-size: var(--t-sm); color: var(--muted); }
+  .opt .row { margin-top: .4rem; }
+  .opt .btn { min-height: 44px; }
 
-  /* コメント一覧。この画面の主役。 */
+  /* アプリは別の窓で開くので、開いたかどうかがこちらからは分からない。
+     分からないまま放置せず、本人に答えてもらう。 */
+  .ask { display: flex; align-items: center; gap: .7rem; flex-wrap: wrap;
+         border-top: 1px solid var(--line); padding-top: .9rem; }
+  .ask .q { font-weight: 700; }
+  .ask .btn { min-height: 44px; }
+  .ask .hint { font-size: var(--t-sm); color: var(--muted); }
+
+  /* --- 届いているコメント ---------------------------------------------- */
   .feedcard { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
   .feedhead { display: flex; align-items: baseline; gap: .6rem;
-              padding: .85rem 1.1rem; border-bottom: 1px solid var(--line); }
-  .feedhead h2 { font-size: 1rem; font-weight: 700; }
-  .feedhead .n { margin-left: auto; font-size: .85rem; color: var(--muted);
+              padding: .75rem 1.1rem; border-bottom: 1px solid var(--line); }
+  .feedhead h2 { font-size: var(--t-md); font-weight: 700; }
+  .feedhead .n { margin-left: auto; font-size: var(--t-sm); color: var(--muted);
                  font-variant-numeric: tabular-nums; }
-  #feed { list-style: none; margin: 0; padding: 0; overflow-y: auto; max-height: 72vh; }
+  #feed { list-style: none; margin: 0; padding: 0; overflow-y: auto; max-height: 58vh; }
   #feed li { display: flex; gap: 1rem; align-items: baseline;
-             padding: .75rem 1.1rem; border-bottom: 1px solid var(--line); }
+             padding: .7rem 1.1rem; border-bottom: 1px solid var(--line); }
   #feed li:last-child { border-bottom: 0; }
   /* いちばん新しい1件だけ地を変える。どれが今来たのかが分かる。 */
   #feed li:first-child { background: var(--surface2); }
-  #feed .at { flex: none; width: 4.5rem; font-size: .75rem; color: var(--muted);
+  #feed .at { flex: none; width: 4.5rem; font-size: var(--t-xs); color: var(--muted);
               font-variant-numeric: tabular-nums; }
-  #feed .tx { font-size: 1.08rem; word-break: break-word; }
-  #feedEmpty { padding: 2.5rem 1.1rem; text-align: center; color: var(--muted); font-size: .9rem; }
+  #feed .tx { font-size: var(--t-lg); word-break: break-word; }
+  #feedEmpty { padding: 2rem 1.1rem; text-align: center; color: var(--muted); font-size: var(--t-md); }
 </style>
 
 <div class="bar">
@@ -86,6 +108,8 @@
     <div class="t" id="trackName">—</div>
     <div class="s" id="eventName">—</div>
   </div>
+
+  <span class="spacer"></span>
 
   <div class="statebox" id="statebox" data-kind="">
     <span class="dot" aria-hidden="true"></span>
@@ -101,27 +125,49 @@
       <span class="s" id="stateSub" aria-hidden="true"></span>
     </div>
   </div>
-
-  <span class="spacer"></span>
-
-  <div class="flowbox" id="flowbox" data-state="idle">
-    <span class="mark" id="flowMark" aria-hidden="true"></span>
-    <div class="lines">
-      <div class="t" id="flowTitle">スライドにまだ流していません</div>
-      <div class="s" id="flowSub">観客のコメントがスライドの上を流れます</div>
-    </div>
-    <div class="acts" id="flowActs">
-      <a id="openApp" class="btn primary" href="#">アプリで流す</a>
-      <a id="browserWay" class="btn" href="#">ブラウザで流す</a>
-      <a id="getApp" class="plain" href="./app.html">アプリを入手</a>
-    </div>
-    <div class="acts" id="flowDone">
-      <button id="changeWay" class="btn" type="button">流し方を変える</button>
-    </div>
-  </div>
 </div>
 
 <main>
+  <section class="flowbox" id="flowbox" data-state="idle">
+    <div class="head">
+      <span class="mark" id="flowMark" aria-hidden="true"></span>
+      <div class="lines">
+        <div class="t" id="flowTitle">スライドにまだ流していません</div>
+        <div class="s" id="flowSub">観客のコメントをどこに流すか選んでください</div>
+      </div>
+      <div id="flowDone" class="hidden">
+        <button id="changeWay" class="btn" type="button">流し方を変える</button>
+      </div>
+    </div>
+
+    <div class="choices" id="flowActs">
+      <div class="opt best">
+        <div class="k">おすすめ</div>
+        <div class="t">アプリで重ねる</div>
+        <div class="s">スライドツールを問いません。全画面のスライドショーの上にも残ります。</div>
+        <div class="row tight">
+          <a id="openApp" class="btn primary" href="#">アプリで流す</a>
+          <a id="getApp" class="btn" href="./app.html">アプリを入手</a>
+        </div>
+      </div>
+      <div class="opt">
+        <div class="k">入れるものなし</div>
+        <div class="t">ブラウザで合成する</div>
+        <div class="s">別の窓でスライドを取り込み、その上に流します。投影が1枚のときに向いています。</div>
+        <div class="row tight">
+          <a id="browserWay" class="btn" href="#">ブラウザで流す</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- アプリは別の窓で開くので、開いたかどうかはこちらから確かめられない。 -->
+    <div class="ask hidden" id="flowAsk">
+      <span class="q">アプリの窓は開きましたか</span>
+      <button id="flowOk" class="btn primary" type="button">開いた</button>
+      <span class="hint">開かないときは、上の「アプリを入手」か「ブラウザで流す」へ</span>
+    </div>
+  </section>
+
   <section class="card feedcard">
     <div class="feedhead">
       <h2>届いているコメント</h2>

@@ -2,35 +2,59 @@
 <meta charset="utf-8">
 <title>弾幕スライド</title>
 <style>
+  /* 配信側（public/css/app.css）の暗い側と同じ色を使う。
+     同じ製品の別の窓なので、見た目が揃っていないと別のアプリに見える。 */
   :root { color-scheme: dark;
-    --bg:#0b0b0f; --surface:#15151d; --surface2:#1c1c26; --line:#2a2a38;
-    --ink:#e8e8ef; --muted:#8a8a99; --accent:#6f8cff; }
+    --bg:#0a0d13; --surface:#141821; --surface2:#1b2029; --line:#262c38; --line2:#3a4250;
+    --ink:#e9edf4; --ink2:#aeb8c8; --muted:#8e98a9;
+    --accent:#4fd3dd; --accent-ink:#04232a; --good:#4fd3dd; --bad:#ff8b8b; }
   * { box-sizing: border-box; }
   html, body { height:100%; margin:0; background:var(--bg); color:var(--ink);
-    font:14px/1.6 -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif; }
+    font:14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif; }
   body { padding:1.5rem; display:grid; gap:1rem; align-content:start; }
-  h1 { margin:0; font-size:.72rem; font-weight:600; letter-spacing:.09em;
-       text-transform:uppercase; color:var(--muted); }
+
+  h1 { margin:0; font-size:1.1rem; font-weight:700; letter-spacing:-.02em; }
+  .say { margin:.15rem 0 0; font-size:.8rem; color:var(--muted); }
+
   label { display:block; font-size:.75rem; color:var(--muted); margin-bottom:.3rem; }
   input, select { width:100%; padding:.6rem .75rem; border-radius:.5rem; font:inherit;
-    background:var(--surface2); color:var(--ink); border:1px solid var(--line); }
+    background:var(--surface2); color:var(--ink); border:1px solid var(--line2); }
   input:focus-visible, select:focus-visible { outline:2px solid var(--accent); outline-offset:1px; border-color:transparent; }
-  button { padding:.7rem 1rem; border:0; border-radius:.5rem; font:inherit; font-weight:600; cursor:pointer;
-    background:var(--accent); color:#0b0b12; width:100%; }
-  button.ghost { background:var(--surface2); color:var(--ink); border:1px solid var(--line); }
+
+  button { padding:.75rem 1rem; border:0; border-radius:.5rem; font:inherit; font-weight:700;
+    cursor:pointer; background:var(--accent); color:var(--accent-ink); width:100%; }
+  button:hover { filter:brightness(1.08); }
+  button.ghost { background:var(--surface2); color:var(--ink); border:1px solid var(--line2); font-weight:600; }
+  button.ghost:hover { background:var(--line); filter:none; }
+
   #msg { min-height:1.3rem; margin:0; font-size:.8rem; color:var(--muted); }
-  #msg[data-kind="bad"] { color:#ff8f8f; }
-  #msg[data-kind="ok"]  { color:#5fd39a; }
+  #msg[data-kind="bad"] { color:var(--bad); }
+  #msg[data-kind="ok"]  { color:var(--good); }
+
+  /* 重ねているあいだ。ここに居る人は窓の向こうを見ているので、文字は少なく。 */
+  .live { display:flex; align-items:center; gap:.5rem; font-weight:700; color:var(--good); }
+  .live .dot { width:.5rem; height:.5rem; border-radius:50%; background:var(--good);
+               box-shadow:0 0 0 4px rgba(79,211,221,.18); }
+
   .keys { margin:0; font-size:.75rem; color:var(--muted); line-height:1.9; }
-  kbd { background:var(--surface2); border:1px solid var(--line); border-bottom-width:2px;
+  .keys a { color:var(--accent); }
+  kbd { background:var(--surface2); border:1px solid var(--line2); border-bottom-width:2px;
         border-radius:.3rem; padding:.05rem .35rem; font:inherit; font-size:.9em; }
+  hr { border:0; border-top:1px solid var(--line); margin:.2rem 0; }
+
   .running { display:none; }
   body[data-running="1"] .idle { display:none; }
   body[data-running="1"] .running { display:block; }
+  body[data-running="1"] .live { display:flex; }
 </style>
 
 <body>
-  <h1>弾幕スライド · 重ねる</h1>
+  <div>
+    <h1>弾幕スライド</h1>
+    <p class="say idle">運営から届いたリンクを貼ると、スライドの上に弾幕を重ねます。</p>
+  </div>
+
+  <div class="live running"><span class="dot"></span><span id="liveText">重ねています</span></div>
 
   <div class="idle">
     <label for="track">運営からのリンク</label>
@@ -47,13 +71,16 @@
   <button id="go" class="idle">スライドに重ねる</button>
   <button id="halt" class="running ghost">重ねるのをやめる</button>
 
-  <p class="keys idle">
-    トラックIDは <a href="#" id="console">登壇者コンソール</a> で作ります
-  </p>
+  <hr>
 
   <p class="keys">
-    <kbd id="k1">⌘⇧C</kbd> クリックを通すかどうかを切り替える<br>
+    <kbd id="k1">⌘⇧C</kbd> クリックを下に通すかどうかを切り替える<br>
     <kbd id="k2">⌘⇧X</kbd> 終了する
+  </p>
+
+  <p class="keys idle">
+    リンクは運営から届きます。自分で運営もするなら
+    <a href="#" id="console">イベントを作る画面</a>で配れます。
   </p>
 
 <script>
@@ -80,7 +107,7 @@
   // 運営のリンクから起動されたとき。登壇者に貼らせないための経路。
   window.shell.onTrack?.((target) => {
     $('track').value = `${target.eventId} ${target.trackId}`;
-    msg('リンクからトラックを受け取った', 'ok');
+    msg('リンクを受け取りました。あとは重ねるだけです', 'ok');
     $('go').focus();
   });
 
@@ -89,14 +116,16 @@
     const r = await window.shell.start({ track: $('track').value, displayId: $('display').value });
     $('go').disabled = false;
     if (!r.ok) { msg(r.reason, 'bad'); $('track').focus(); return; }
-    msg(`${r.trackId} に重ねている`, 'ok');
+    msg('');
+    $('liveText').textContent = `${r.trackId} を重ねています`;
     document.body.dataset.running = '1';
   }
 
+  // 運営の画面はここで作る。弾幕ページそのものではないので、外のブラウザで開く。
   $('console').addEventListener('click', async (e) => {
     e.preventDefault();
     const origin = await window.shell.origin();
-    window.shell.openExternal(`${origin}/speaker.html`);
+    window.shell.openExternal(`${origin}/organizer.html`);
   });
 
   $('go').addEventListener('click', go);

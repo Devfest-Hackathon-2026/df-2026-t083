@@ -61,26 +61,35 @@ export async function createStage({ eventId, trackId, now = () => Date.now() } =
 
   el('openApp').href = appUrlFor(eventId, trackId);
   el('browserWay').href = withEnv(`${overlayUrlFor(eventId, trackId)}&capture=1`);
+  // 入手ページにもトラックを渡す。入れている余裕が無い人に、
+  // そのままブラウザで流す道を出せる。
+  el('getApp').href = withEnv(
+    `./app.html?e=${encodeURIComponent(eventId)}&t=${encodeURIComponent(trackId)}`);
 
   // --- どこに流しているか ------------------------------------------------
   // idle    まだ決めていない
   // handoff アプリに渡した。開いたかどうかはこちらからは分からない
-  // live    こちらが開いた窓から合図が返ってきた
+  // live    流れていることが分かっている
+  //         （こちらが開いた窓から合図が返った／登壇者が「開いた」と答えた）
   const FLOW = {
     idle: {
       title: 'スライドにまだ流していません',
-      sub: '観客のコメントがスライドの上を流れます',
+      sub: '観客のコメントをどこに流すか選んでください',
       mark: circle(),
+      // 渡した直後に開き直せても意味が無いので、問いかけは出さない。
+      acts: true, ask: false, openApp: true, done: false,
     },
     handoff: {
       title: 'アプリに渡しました',
-      sub: 'アプリの窓を確かめてください。開かないときはアプリを入手してください',
+      sub: 'アプリの窓が開いているか確かめてください',
       mark: circle(),
+      acts: true, ask: true, openApp: false, done: false,
     },
     live: {
-      title: 'ブラウザでスライドに流しています',
+      title: 'スライドに流しています',
       sub: 'このまま発表できます',
       mark: check(),
+      acts: false, ask: false, openApp: false, done: true,
     },
   };
 
@@ -95,26 +104,35 @@ export async function createStage({ eventId, trackId, now = () => Date.now() } =
       + ' stroke-linecap="round" stroke-linejoin="round"/></svg>';
   }
 
+  const toggle = (id, on) => el(id).classList.toggle('hidden', !on);
+
   let flow = 'idle';
-  function setFlow(next, { showActs = false } = {}) {
+  function setFlow(next, { showActs = false, sub = null } = {}) {
     flow = next;
     const f = FLOW[next];
     el('flowbox').dataset.state = next;
-    if (showActs) el('flowbox').dataset.acts = '1';
-    else el('flowbox').removeAttribute('data-acts');
     el('flowTitle').textContent = f.title;
-    el('flowSub').textContent = f.sub;
+    el('flowSub').textContent = sub ?? f.sub;
     el('flowMark').innerHTML = f.mark;
     el('flowMark').style.color = next === 'live' ? 'var(--good)' : 'var(--muted)';
+    // 「流し方を変える」で開き直したときは、決め終わっていても選択肢を出す。
+    toggle('flowActs', f.acts || showActs);
+    toggle('openApp', f.openApp || showActs);
+    toggle('flowAsk', f.ask && !showActs);
+    toggle('flowDone', f.done && !showActs);
   }
   setFlow('idle');
 
   // アプリに渡したかどうかは、こちらからは確かめられない。
   // Electron は別の窓で開くので opener が無く、合図が返らない。
-  // 分かるのは「渡した」ところまでなので、そこまでを出す。
+  //
+  // 前はここで終わりにしていた。渡したことしか言えないので、アプリを持っていない
+  // 人は「アプリに渡しました」のまま止まる。成功したときと失敗したときの画面が
+  // 同じで、本人にも次にやることが分からない。確かめられないなら本人に訊く。
   el('openApp').addEventListener('click', () => {
     if (flow !== 'live') setFlow('handoff');
   });
+  el('flowOk').addEventListener('click', () => setFlow('live', { sub: 'アプリの窓で流しています' }));
 
   // 同じタブで遷移するとこの画面が消え、合図も返らなくなる。
   // 別の窓で開いて opener を残す。
@@ -201,7 +219,7 @@ export async function createStage({ eventId, trackId, now = () => Date.now() } =
   // こちらが開いた窓からだけ合図が返る。返ってきたら「流している」に変える。
   addEventListener('message', (e) => {
     if (e.origin !== location.origin) return;
-    if (e.data?.type === 'danmaku:overlay-ready') setFlow('live');
+    if (e.data?.type === 'danmaku:overlay-ready') setFlow('live', { sub: 'ブラウザの窓で流しています' });
   });
 
   render();

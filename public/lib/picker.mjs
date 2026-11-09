@@ -59,9 +59,9 @@ export async function createPicker({ eventId } = {}) {
       const name = document.createElement('div');
       name.className = 't';
       name.textContent = t.name;
-      const sub = document.createElement('div');
-      sub.className = 's';
-      // コメントは外から来る。textContent で入れる。
+      // 受付中かどうかは色と文字の両方で出す。暗い客席では色が沈む。
+      const sub = document.createElement('span');
+      sub.className = t.stopped ? 'pill mute' : 'pill good';
       sub.textContent = t.stopped ? '受付を待っています' : '受付中';
       box.append(name, sub);
       const chev = document.createElement('span');

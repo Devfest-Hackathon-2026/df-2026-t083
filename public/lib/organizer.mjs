@@ -13,7 +13,21 @@ import {
 export async function createOrganizer({ eventId, random = () => Math.random() } = {}) {
   const el = (id) => document.getElementById(id);
   const msg = el('msg');
-  const say = (text, kind = '') => { msg.textContent = text; msg.dataset.kind = kind; };
+
+  /**
+   * 操作の結果を出す。
+   *
+   * うまくいった知らせは数秒で引っ込める。「コピーしました」が画面に居座ると、
+   * 次に押したときコピーできたのかどうかが分からない。
+   * 失敗はそのまま残す。消えると、何が起きたのか確かめる手段が無くなる。
+   */
+  let clearTimer = 0;
+  const say = (text, kind = '') => {
+    msg.textContent = text;
+    msg.dataset.kind = kind;
+    clearTimeout(clearTimer);
+    if (kind === 'ok') clearTimer = setTimeout(() => { msg.textContent = ''; }, 8000);
+  };
   const fail = (text) => say(text, 'bad');
 
   // 運営は匿名では入れない。イベントは当日まで残るので、端末を変えても
@@ -180,13 +194,23 @@ export async function createOrganizer({ eventId, random = () => Math.random() } 
     }, (e) => fail(`読めない: ${e.code ?? e.message}`));
 
     // 名前と日付はその場で直せる。作り直させない。
+    //
+    // 見出しがそのまま入力欄になっているので、空のまま離れると見出しが消えたように
+    // 見える。保存できなかったときは、入力欄のほうを元に戻す。
     const saveEvent = async () => {
       const name = el('evNameInput').value.trim();
-      if (!name) { fail('イベント名は空にできません'); return; }
+      if (!name) {
+        fail('イベント名は空にできません');
+        el('evNameInput').value = el('evName').textContent;
+        return;
+      }
       try {
         await events.renameEvent(id, { name, heldOn: el('evDateInput').value || '' });
         say('保存しました', 'ok');
-      } catch (e) { fail(`保存できない: ${e.code ?? e.message}`); }
+      } catch (e) {
+        fail(`保存できない: ${e.code ?? e.message}`);
+        el('evNameInput').value = el('evName').textContent;
+      }
     };
     el('evNameInput').addEventListener('change', saveEvent);
     el('evDateInput').addEventListener('change', saveEvent);
@@ -285,23 +309,25 @@ export async function createOrganizer({ eventId, random = () => Math.random() } 
       // 渡す相手ごとに分ける。取り違えると、観客に登壇者用の画面を配ることになる。
       const toSpeaker = cell(tr);
       toSpeaker.className = 'link';
-      toSpeaker.append(button('コピー', 'btn toSpeaker', async () => {
+      toSpeaker.append(button('コピー', 'btn sm toSpeaker', async () => {
         try {
           await copy(stageUrlFor(eventId, t.id));
           say(`${t.name} の登壇用リンクをコピーしました`, 'ok');
         } catch (e) { fail(`リンクを作れない: ${e.code ?? e.message}`); }
       }, `${t.name} の登壇用リンクをコピー`));
 
+      // 観客に配るものは繋げて1つの塊にする。登壇者用の単独ボタンと形が違えば、
+      // 色が見えなくても取り違えない。
       const toAudience = cell(tr);
       toAudience.className = 'link';
       const audRow = document.createElement('div');
-      audRow.className = 'row tight';
+      audRow.className = 'seg';
       audRow.append(
-        button('URL', 'btn toAudience', async () => {
+        button('URL', 'btn sm toAudience', async () => {
           await copy(postUrlFor(eventId, t.id));
           say(`${t.name} の投稿URLをコピーしました`, 'ok');
         }, `${t.name} の投稿URLをコピー`),
-        button('QR', 'btn toAudience', async () => {
+        button('QR', 'btn sm toAudience', async () => {
           const svg = await QRCode.toString(postUrlFor(eventId, t.id),
             { type: 'svg', errorCorrectionLevel: 'M', margin: 2, width: 360 });
           printQr(svg, t.name, postUrlFor(eventId, t.id), 'スマホで読み取るとコメントを送れます');
@@ -313,17 +339,17 @@ export async function createOrganizer({ eventId, random = () => Math.random() } 
       guard.className = 'link';
       const trackBus = () => createBus(sdk, { db, eventId, trackId: t.id, uid });
       guard.append(t.stopped
-        ? button('受け付ける', 'btn resume', async () => {
+        ? button('受け付ける', 'btn sm resume', async () => {
             try { await trackBus().open(); say(`${t.name} で投稿を受け付けます`, 'ok'); }
             catch (e) { fail(`開けられない: ${e.code ?? e.message}`); }
           }, `${t.name} の投稿を受け付ける`)
-        : button('止める', 'btn stop', async () => {
+        : button('止める', 'btn sm stop', async () => {
             try { await trackBus().close(); say(`${t.name} の投稿を止めました`, 'ok'); }
             catch (e) { fail(`止められない: ${e.code ?? e.message}`); }
           }, `${t.name} の投稿を止める`));
 
       const del = cell(tr);
-      del.append(button('削除', 'btn remove', async () => {
+      del.append(button('削除', 'btn sm remove', async () => {
         if (!confirm(`${t.name} を削除します。届いたコメントは見られなくなります。`)) return;
         try {
           await sdk.deleteDoc(sdk.doc(db, 'events', eventId, 'tracks', t.id));

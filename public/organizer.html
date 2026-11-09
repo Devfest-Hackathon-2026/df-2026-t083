@@ -4,72 +4,107 @@
 <title>弾幕スライド 運営</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#0b0d12" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#0a0d13" media="(prefers-color-scheme: dark)">
 <link rel="stylesheet" href="./css/app.css">
 <style>
-  .lead { color: var(--muted); font-size: .9rem; margin: .2rem 0 0; }
-  h1.title { font-size: 1.6rem; font-weight: 700; }
-  h2.section { font-size: .8rem; font-weight: 600; color: var(--muted); margin: 1.5rem 0 .5rem; }
+  .lead { color: var(--muted); font-size: var(--t-md); margin: .2rem 0 0; }
+  h1.title { font-size: var(--t-2xl); font-weight: 800; }
+  h2.section { font-size: var(--t-xs); font-weight: 700; color: var(--muted); margin: 0 0 .5rem; }
+
+  /* 操作の結果。流れの中に行を空けておくと、何も起きていないときに
+     意味のない空白が残る。出るときだけ浮かせる。
+     クリックは通す。押したい物の上に出て、押せなくなるのを防ぐ。 */
+  #msg {
+    position: fixed; top: 4.2rem; left: 50%; transform: translateX(-50%); z-index: 20;
+    margin: 0; padding: .5rem .9rem; border-radius: 999px; pointer-events: none;
+    font-size: var(--t-sm); font-weight: 600; max-width: calc(100vw - 2rem);
+    background: var(--ink); color: var(--bg); border: 1px solid transparent;
+  }
+  #msg:empty { display: none; }
+  #msg[data-kind="ok"]  { background: var(--good-bg); color: var(--good); border-color: currentColor; }
+  #msg[data-kind="bad"] { background: var(--bad-bg);  color: var(--bad);  border-color: currentColor; }
 
   /* 一覧の行はまるごと押せる。1行1イベント。 */
-  .evrow { display: contents; }
   table.rows tbody tr.clickable { cursor: pointer; }
   table.rows tbody tr.clickable:hover { background: var(--surface2); }
   .chev { color: var(--muted); text-align: right; width: 2rem; }
-
   .done td { color: var(--muted); }
 
-  /* 詳細 */
-  .head { display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-start; }
-  .head > * { min-width: 0; }
-  .head .grow { flex: 1 1 18rem; }
-  .qrcard { display: flex; gap: .9rem; align-items: flex-start; padding: .9rem 1rem; }
-  .qrcard .slot { width: 84px; height: 84px; flex: none; display: grid; place-items: center;
-                  border: 1px dashed var(--line2); border-radius: 8px; color: var(--muted); font-size: .7rem; }
-  .qrcard .slot svg { width: 84px; height: 84px; border-radius: 6px; }
-  .emergency { padding: .9rem 1rem; border: 1px solid color-mix(in oklab, var(--bad) 35%, var(--line));
-               background: var(--bad-bg); border-radius: var(--radius); }
-  .emergency .label { font-size: .72rem; font-weight: 700; color: var(--bad); margin-bottom: .45rem; }
+  /* --- 詳細 --------------------------------------------------------- */
+  .crumb { display: inline-flex; align-items: center; gap: .3rem; font-size: var(--t-sm);
+           color: var(--muted); text-decoration: none; }
+  .crumb:hover { color: var(--accent); }
 
-  td.count { text-align: right; font-variant-numeric: tabular-nums; }
+  /* 見出しがそのまま入力欄。同じ名前を2回出さない。 */
+  h1.title.edit { display: flex; }
+  #evNameInput {
+    font: inherit; font-size: var(--t-2xl); font-weight: 800; letter-spacing: -.02em;
+    padding: .1rem .4rem; margin-left: -.4rem; width: 100%; max-width: 26rem;
+    background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm);
+  }
+  #evNameInput:hover { border-color: var(--line); }
+  #evNameInput:focus { background: var(--surface); border-color: var(--line2); }
+  /* 見出しと開催日はひと続き。離して置くと、どのイベントの日付か迷う。 */
+  .headrow { display: flex; flex-wrap: wrap; gap: .5rem 1.25rem; align-items: flex-end; }
+  .headrow .who { flex: 0 1 auto; min-width: 0; }
+  .headrow .when { flex: 0 0 10rem; }
+
+  /* 配る。運営がこの画面に来る理由そのもの。 */
+  .qrcard { display: flex; gap: 1.1rem; align-items: center; padding: 1rem 1.1rem; flex-wrap: wrap; }
+  /* QR は白地に黒で刷られる。暗い配色でも地を白のまま置く。
+     読み取る側のカメラは、反転した QR を読めないことがある。 */
+  .qrcard .slot { width: 112px; height: 112px; flex: none; display: grid; place-items: center;
+                  border: 1px solid var(--line2); border-radius: 8px; color: #6b7280;
+                  font-size: var(--t-xs); background: #fff; }
+  .qrcard .slot svg { width: 112px; height: 112px; border-radius: 6px; display: block; }
+  .qrcard .body { flex: 1 1 16rem; min-width: 0; }
+  .qrcard .what { font-weight: 700; }
+  .qrcard .why { font-size: var(--t-sm); color: var(--muted); margin: .1rem 0 .55rem; }
+
+  /* 表の中。色ではなく、まとまりと重さで役割を出す。 */
+  td.count { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink2); }
   td.link { white-space: nowrap; }
-  /* 渡す相手で色を変える。取り違えると事故になる。 */
-  .btn.toSpeaker { border-color: color-mix(in oklab, var(--accent) 45%, var(--line2));
-                   color: var(--accent); }
-  .btn.toAudience { border-color: color-mix(in oklab, var(--good) 45%, var(--line2));
-                    color: var(--good); }
-  .btn.remove { color: var(--bad); border-color: transparent; background: transparent; padding: .4rem .5rem; }
-  .btn.remove:hover { background: var(--bad-bg); }
-  .btn.stop { color: var(--bad); border-color: color-mix(in oklab, var(--bad) 45%, var(--line2)); }
-  .btn.resume { color: var(--good); border-color: color-mix(in oklab, var(--good) 45%, var(--line2)); }
+  /* 登壇者に渡すものは1つ、観客に配るものは繋がった2つ。
+     色だけで分けない。繋がり方が違えば、色が見えなくても取り違えない。 */
+  .btn.toSpeaker { color: var(--accent);
+                   border-color: color-mix(in oklab, var(--accent) 45%, var(--line2)); }
+  .btn.toSpeaker:hover { background: var(--surface2); color: var(--accent); }
+  .btn.stop { color: var(--bad); border-color: color-mix(in oklab, var(--bad) 40%, var(--line2)); }
+  .btn.stop:hover { background: var(--bad-bg); color: var(--bad); }
+  .btn.resume { color: var(--accent);
+                border-color: color-mix(in oklab, var(--accent) 45%, var(--line2)); }
+  .btn.resume:hover { background: var(--good-bg); color: var(--accent); }
+  .btn.remove { color: var(--muted); border-color: transparent; background: transparent;
+                padding: .35rem .5rem; font-weight: 500; }
+  .btn.remove:hover { background: var(--bad-bg); color: var(--bad); }
+  /* 消す列だけ少し離す。隣の「止める」は戻せる操作で、こちらは戻せない。 */
+  #tracks td:last-child, .rows thead th:last-child { padding-left: 1.4rem; }
 
-  .foot { font-size: .8rem; color: var(--muted); margin-top: .6rem; }
+  .foot { font-size: var(--t-sm); color: var(--muted); margin: .7rem 0 0; }
+
   /* 消す操作は離して置く。非常停止の隣だと押し間違える。 */
-  .danger-zone { margin-top: 3rem; padding: 1rem 1.2rem; border-radius: var(--radius);
+  .danger-zone { margin-top: 4rem; padding: 1rem 1.2rem; border-radius: var(--radius);
     border: 1px solid color-mix(in oklab, var(--bad) 30%, var(--line));
     display: flex; flex-wrap: wrap; gap: 1rem; align-items: center;
     justify-content: space-between; }
   .danger-zone > * { min-width: 0; }
-  #msg { min-height: 1.4rem; font-size: .85rem; }
-  #msg[data-kind="ok"]  { color: var(--good); }
-  #msg[data-kind="bad"] { color: var(--bad); }
 </style>
 
 <div class="topbar">
-  <span class="name">弾幕スライド</span>
+  <a class="name" href="./" style="color:inherit;text-decoration:none">弾幕スライド</a>
   <span class="pill mute">運営</span>
   <span class="spacer"></span>
   <span class="muted" id="who"></span>
   <button id="signOut" class="btn quiet hidden">サインアウト</button>
 </div>
 
-<main class="page stack">
-  <p id="msg" data-kind="" role="status" aria-atomic="true"></p>
+<p id="msg" data-kind="" role="status" aria-atomic="true"></p>
 
+<main class="page stack">
   <!-- サインインしていないとき -->
-  <section id="gateView" class="card hidden" style="padding:2rem 1.5rem;text-align:center">
-    <h1 class="title" style="font-size:1.35rem">運営としてサインイン</h1>
-    <p class="lead" style="margin:.4rem auto 1.5rem;max-width:30rem">
+  <section id="gateView" class="card hidden" style="padding:2.5rem 1.5rem;text-align:center">
+    <h1 class="title" style="font-size:var(--t-xl)">運営としてサインイン</h1>
+    <p class="lead" style="margin:.5rem auto 1.5rem;max-width:30rem">
       イベントとトラックは当日まで残ります。端末を変えても同じものを開けるように、
       Google アカウントで入ってください。</p>
     <button id="signIn" class="btn primary lg">Google で続ける</button>
@@ -92,101 +127,111 @@
       </div>
     </div>
 
-    <h2 class="section">これから・開催中</h2>
-    <!-- 表は画面が狭いとはみ出す。横に逃がす。 -->
-    <div class="card scroller"><table class="rows">
-      <caption class="visually-hidden">これから開催するイベント</caption>
-      <thead><tr>
-        <th scope="col">イベント名</th><th scope="col">開催日</th>
-        <th scope="col">トラック</th><th scope="col">受付状況</th><th><span class="visually-hidden">開く</span></th>
-      </tr></thead>
-      <tbody id="upcoming"></tbody>
-    </table></div>
-    <p id="noUpcoming" class="muted hidden" style="font-size:.85rem">まだイベントがありません。</p>
+    <div class="lane">
+      <h2 class="section">これから・開催中</h2>
+      <!-- 表は画面が狭いとはみ出す。横に逃がす。 -->
+      <div class="card scroller"><table class="rows">
+        <caption class="visually-hidden">これから開催するイベント</caption>
+        <thead><tr>
+          <th scope="col">イベント名</th><th scope="col">開催日</th>
+          <th scope="col">トラック</th><th scope="col">受付状況</th><th><span class="visually-hidden">開く</span></th>
+        </tr></thead>
+        <tbody id="upcoming"></tbody>
+      </table></div>
+      <p id="noUpcoming" class="empty hidden">
+        まだイベントがありません。上の欄に名前を入れて作ってください。</p>
+    </div>
 
-    <h2 class="section">終わったイベント</h2>
-    <div class="card scroller"><table class="rows">
-      <caption class="visually-hidden">終わったイベント</caption>
-      <tbody id="past"></tbody></table></div>
-    <p id="noPast" class="muted hidden" style="font-size:.85rem">ありません。</p>
+    <div class="lane">
+      <h2 class="section">終わったイベント</h2>
+      <div class="card scroller"><table class="rows">
+        <caption class="visually-hidden">終わったイベント</caption>
+        <tbody id="past"></tbody></table></div>
+      <p id="noPast" class="muted hidden" style="font-size:var(--t-sm)">まだありません。</p>
+    </div>
   </section>
 
   <!-- イベント詳細 -->
   <section id="detailView" class="stack hidden">
-    <a href="./organizer.html" class="btn quiet" style="justify-self:start">‹ イベント一覧</a>
+    <a href="./organizer.html" class="crumb" style="justify-self:start">‹ イベント一覧</a>
 
-    <div class="head">
-      <div class="grow">
-        <h1 class="title" id="evName">—</h1>
+    <div class="headrow">
+      <div class="who">
+        <!-- 見出しそのものが入力欄。読み上げ用の名前は隠した側が持つ。 -->
+        <h1 class="title edit">
+          <span id="evName" class="visually-hidden">—</span>
+          <input id="evNameInput" maxlength="60" autocomplete="off" aria-label="イベント名">
+        </h1>
         <p class="lead" id="evMeta">—</p>
-        <div class="row tight" id="evEditRow" style="margin-top:.6rem">
-          <label class="field grow" style="flex:1 1 16rem">
-            <span>イベント名</span>
-            <input id="evNameInput" maxlength="60" autocomplete="off"></label>
-          <label class="field" style="flex:0 1 11rem">
-            <span>開催日</span>
-            <input id="evDateInput" type="date"></label>
-        </div>
       </div>
+      <label class="field when"><span>開催日</span>
+        <input id="evDateInput" type="date"></label>
+    </div>
+
+    <div class="lane">
+      <div class="lane-head"><h2>観客に配る</h2></div>
       <div class="card qrcard">
         <div class="slot" id="evQr">QR</div>
-        <div>
-          <div style="font-weight:600;font-size:.9rem">チラシ用QR（イベント全体）</div>
-          <div class="mono muted" id="evUrl">—</div>
-          <div class="row tight" style="margin-top:.3rem">
-            <button id="printEvQr" class="btn quiet">印刷</button>
-            <button id="copyEvUrl" class="btn quiet">URLをコピー</button>
+        <div class="body">
+          <div class="what">チラシ用QR（イベント全体）</div>
+          <div class="why">
+            読み取ると、どのトラックに送るかを観客が選びます。1枚だけ刷れば足ります。
+          </div>
+          <div class="row tight">
+            <button id="printEvQr" class="btn sm">印刷する</button>
+            <button id="copyEvUrl" class="btn sm">URLをコピー</button>
+            <span class="mono muted" id="evUrl">—</span>
           </div>
         </div>
       </div>
-      <div class="emergency">
-        <div class="label">非常用</div>
-        <button id="stopAll" class="btn danger">全トラックの投稿を止める</button>
+    </div>
+
+    <div class="lane">
+      <div class="lane-head">
+        <h2>トラック</h2>
+        <span class="hint">URLは当日中変わりません。登壇者が代わってもQRは貼り替え不要です。</span>
+        <!-- 開けるのと止めるのは対になる操作。片方だけ目立たせると、
+             止めるほうが常に画面でいちばん強い要素になってしまう。 -->
+        <span class="acts">
+          <button id="openAll" class="btn sm">全部で受け付ける</button>
+          <button id="stopAll" class="btn sm caution">全部止める</button>
+        </span>
       </div>
+
+      <div class="card scroller"><table class="rows">
+        <caption class="visually-hidden">トラックの一覧</caption>
+        <thead><tr>
+          <th scope="col">トラック</th><th scope="col">受付</th>
+          <th scope="col" style="text-align:right">件数</th>
+          <th scope="col">登壇者に渡す</th><th scope="col">観客に配る</th>
+          <th scope="col">受付の操作</th><th><span class="visually-hidden">削除</span></th>
+        </tr></thead>
+        <tbody id="tracks"></tbody>
+        <tfoot><tr>
+          <td colspan="7">
+            <div class="row">
+              <span class="muted" style="font-size:var(--t-sm)">トラックを足す</span>
+              <input id="newTrackName" maxlength="40" style="flex:0 1 14rem" autocomplete="off">
+              <button id="addTrack" class="btn primary sm">追加</button>
+            </div>
+          </td>
+        </tr></tfoot>
+      </table></div>
+      <p class="foot">
+        <strong>登壇者に渡す</strong>リンクは、そのトラックの画面を開くだけのもの。合言葉は付かず、登壇者が投稿を止めたり開けたりすることはできません。<br>
+        <strong>観客に配る</strong>QRは部屋の入口用。チラシには上のイベント全体のQRを使います。
+      </p>
     </div>
 
-    <div class="row" style="justify-content:space-between;align-items:flex-end;margin-top:.5rem">
-      <h2 style="font-size:1.05rem;font-weight:700">トラック</h2>
-      <!-- 当日の朝に1トラックずつ開けさせない。作った直後は受付前なので、ここで一度に開ける。 -->
-      <button id="openAll" class="btn">全トラックで投稿を受け付ける</button>
-    </div>
-    <div class="row" style="justify-content:flex-end;margin-top:.2rem">
-      <span class="muted" style="font-size:.8rem">トラックのURLは当日中変わりません。登壇者が代わってもQRは貼り替え不要です。</span>
-    </div>
-
-    <div class="card scroller"><table class="rows">
-      <caption class="visually-hidden">トラックの一覧</caption>
-      <thead><tr>
-        <th scope="col">トラック</th><th scope="col">受付</th>
-        <th scope="col" style="text-align:right">件数</th>
-        <th scope="col">登壇者に渡す</th><th scope="col">観客に配る</th>
-        <th scope="col">投稿</th><th><span class="visually-hidden">削除</span></th>
-      </tr></thead>
-      <tbody id="tracks"></tbody>
-      <tfoot><tr>
-        <td colspan="7">
-          <div class="row">
-            <span class="muted" style="font-size:.85rem">トラックを足す</span>
-            <input id="newTrackName" maxlength="40" style="flex:0 1 16rem" autocomplete="off">
-            <button id="addTrack" class="btn primary">追加</button>
-          </div>
-        </td>
-      </tr></tfoot>
-    </table></div>
-    <p class="foot">
-  <strong>登壇者に渡す</strong>リンクは、そのトラックの画面を開くだけのもの。合言葉は付かず、登壇者が投稿を止めたり開けたりすることはできません。<br>
-  <strong>観客に配る</strong>QRは部屋の入口用。チラシには右上のイベント全体のQRを使います。
-</p>
-
-<!-- 消す操作は非常停止から離して置く。隣り合っていると押し間違える。 -->
-<section class="danger-zone">
-  <div>
-    <div style="font-weight:600">このイベントを削除する</div>
-    <div class="muted" style="font-size:.82rem">
-      トラックと一緒に消えます。配ったQRとリンクはすべて使えなくなります。</div>
-  </div>
-  <button id="deleteEvent" class="btn danger">削除する</button>
-</section>
+    <!-- 消す操作は非常停止から離して置く。隣り合っていると押し間違える。 -->
+    <section class="danger-zone">
+      <div>
+        <div style="font-weight:700">このイベントを削除する</div>
+        <div class="muted" style="font-size:var(--t-sm)">
+          トラックと一緒に消えます。配ったQRとリンクはすべて使えなくなります。</div>
+      </div>
+      <button id="deleteEvent" class="btn danger">削除する</button>
+    </section>
   </section>
 </main>
 

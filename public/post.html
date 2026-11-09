@@ -4,39 +4,83 @@
 <title>弾幕を送る</title>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#0b0d12" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#0a0d13" media="(prefers-color-scheme: dark)">
 <link rel="stylesheet" href="./css/app.css">
 <style>
   body { min-height: 100dvh; display: flex; flex-direction: column;
     padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
-  main { flex: 1; display: flex; flex-direction: column; gap: .6rem; padding: 1.25rem; max-width: 32rem; width: 100%; margin: 0 auto; }
+  main { flex: 1; display: flex; flex-direction: column; gap: .55rem; padding: 1.25rem;
+         max-width: 32rem; width: 100%; margin: 0 auto; }
 
-  #track { font-size: 1.15rem; font-weight: 700; }
-  /* 暗い客席で読む。見出しほどではないが、消えない大きさにする */
-  label.field > span { font-size: .85rem; }
-  #title { font-size: .92rem; color: var(--ink2); margin-bottom: .5rem; }
+  .head { display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap; margin-bottom: .3rem; }
+  #track { font-size: var(--t-xl); font-weight: 700; letter-spacing: -.02em; }
+  /* 受付中かどうか。暗い客席で最初に探すのはここ。 */
+  #title { font-size: var(--t-sm); font-weight: 700; color: var(--good); }
+  #title[data-kind="wait"] { color: var(--bad); }
+  #title[data-kind="dead"] { color: var(--muted); font-weight: 400; }
 
-  /* 16px 未満だと iOS が勝手に拡大し、送信ボタンが画面外へ出る */
-  #text { min-height: 7rem; font-size: 1rem; background: var(--surface2); }
+  label.field > span { font-size: var(--t-sm); }
+
+  /* 送ったものを重ねて飛ばすので、ここを基準にする。 */
+  label.field { position: relative; }
+  /* 16px 未満だと iOS が勝手に拡大し、送信ボタンが画面外へ出る。
+     ルートの文字が 15px なので rem では足りない。実寸で指定する。 */
+  #text { min-height: 5.5rem; font-size: 16px; background: var(--surface2); line-height: 1.6; }
   #text[data-over="1"] { border-color: var(--bad); }
-  #count { align-self: flex-end; font-size: .8rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+  #text:focus { background: var(--surface); }
+
+  /* 送ったものは左へ抜ける。スライドの上で起きることと同じ向きに動かす。 */
+  .fly {
+    position: absolute; z-index: 2; max-width: 100%;
+    font-size: 16px; font-weight: 700; color: var(--ink); pointer-events: none;
+    white-space: nowrap; overflow: hidden;
+    animation: fly .55s cubic-bezier(.4, 0, .75, .3) forwards;
+  }
+  @keyframes fly {
+    to { transform: translateX(-115%); opacity: 0; }
+  }
+
+  #count { align-self: flex-end; font-size: var(--t-xs); color: var(--muted);
+           font-variant-numeric: tabular-nums; }
   #count[data-over="1"] { color: var(--bad); font-weight: 700; }
 
-  /* 指で押すものなので 48px を下回らせない */
-  #send { min-height: 48px; padding: .95rem; font-size: 1rem;
-          background: var(--surface2); color: var(--ink); border: 1px solid var(--line2); }
+  /* 指で押すものなので 48px を下回らせない。 */
+  #send { position: relative; overflow: hidden; min-height: 50px; padding: .95rem;
+          font-size: 1rem; background: var(--surface2); color: var(--ink);
+          border: 1px solid var(--line2); }
   #send:not(:disabled) { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+  /* 待ち時間は秒数だけでなく、溜まっていく帯でも出す。
+     数字が 2 から 1 に変わるまでのあいだ、何も動かないと止まって見える。
+     減るのではなく溜まる向きにする。満ちたら押せる、が一目で分かる。 */
+  #sendFill { position: absolute; inset: 0; transform-origin: left; z-index: 0;
+              transform: scaleX(var(--p, 0)); background: var(--good-bg);
+              transition: transform .2s linear; }
+  #sendLabel { position: relative; z-index: 1; }
 
-  #note { min-height: 2.6rem; margin: 0; font-size: .85rem; color: var(--muted); }
+  #note { min-height: 2.6rem; margin: 0; font-size: var(--t-sm); color: var(--muted); }
   #note[data-kind="ok"]   { color: var(--good); }
   #note[data-kind="wait"] { color: var(--warn); }
   #note[data-kind="bad"]  { color: var(--bad); }
+
+  /* いま流れているもの。自分の1件が届いたことが、ここで分かる。 */
+  /* 下端に寄せない。あいだに大きな空白があると、関係の無いものに見える。 */
+  .room { margin-top: .9rem; padding-top: 1.1rem; border-top: 1px solid var(--line); }
+  .room h2 { font-size: var(--t-xs); font-weight: 700; color: var(--muted); }
+  #room { list-style: none; margin: .5rem 0 0; padding: 0; display: grid; gap: 1px;
+          background: var(--line); border: 1px solid var(--line); border-radius: var(--radius);
+          overflow: hidden; }
+  #room li { background: var(--surface); padding: .55rem .8rem; font-size: var(--t-md);
+             word-break: break-word; }
+  /* いちばん新しい1件。送った直後に、自分のものがここに出る。 */
+  #room li:first-child { background: var(--good-bg); font-weight: 600; }
+  #room:empty { display: none; }
+  #roomEmpty { margin: .5rem 0 0; font-size: var(--t-sm); color: var(--muted); }
 </style>
 
 <main>
-  <div>
+  <div class="head">
     <div id="track">—</div>
-    <div id="title">接続中…</div>
+    <div id="title" data-kind="dead">接続中…</div>
   </div>
 
   <!-- ラベルは見えるところに置く。placeholder は打ち始めた瞬間に消えるので、
@@ -44,14 +88,22 @@
        送れない理由は aria-describedby で入力欄に紐づける。
        離れた場所に出すと、何が悪いのかが結びつかない。 -->
   <label class="field" for="text"><span>コメント</span>
-    <textarea id="text" rows="4"
+    <textarea id="text" rows="3"
       enterkeyhint="send" autocomplete="off" autocapitalize="off"
       aria-describedby="count note"></textarea></label>
   <span id="count" data-over="">0 / 60</span>
 
-  <button id="send" class="btn block" disabled>送信</button>
+  <button id="send" class="btn block" disabled>
+    <span id="sendFill" aria-hidden="true"></span><span id="sendLabel">送信</span>
+  </button>
   <!-- 状態が変わったことを読み上げる。番号だけでなく文として伝える。 -->
   <p id="note" data-kind="" role="status" aria-atomic="true">送るとスライドの上に流れます</p>
+
+  <section class="room">
+    <h2>スライドに流れているコメント</h2>
+    <ul id="room"></ul>
+    <p id="roomEmpty">まだ誰も送っていません。最初の1件になれます。</p>
+  </section>
 </main>
 
 <script type="module">
