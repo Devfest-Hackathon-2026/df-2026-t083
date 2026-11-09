@@ -67,17 +67,50 @@ function deliverTrack(target) {
 
 function createSetupWindow() {
   setupWin = new BrowserWindow({
-    width: 520, height: 460, resizable: false,
+    // 操作をボタンにしたぶん縦に伸びる。resizable: false なので、
+    // 足りないと「終了する」が窓の外に出たまま掴めなくなる。
+    width: 520, height: 560, resizable: false,
     title: '弾幕スライド',
     backgroundColor: '#0b0b0f',
     webPreferences: { preload: path.join(__dirname, 'preload.cjs') },
   });
   setupWin.loadFile(path.join(__dirname, 'setup.html'));
   setupWin.webContents.once('did-finish-load', () => {
+    // 読み込みの前に送っても届かない。開いた時点の現在値をここで渡す。
+    sendClickThrough();
     if (pendingTrack) setupWin.webContents.send('track', pendingTrack);
   });
   setupWin.on('closed', () => { setupWin = null; });
   return setupWin;
+}
+
+/**
+ * 設定ウィンドウの退避先。投影先でない画面の真ん中に置く。
+ *
+ * 弾幕を出し始めたあとも、止める手段はこのウィンドウの中にしか無い。
+ * Dock を隠しているので Cmd+Tab でも呼び戻せず、隠してしまうと手が1つも残らない。
+ * 投影先から逃がせば、客席には映らないまま手元で触れる。
+ *
+ * 画面が1枚しか無いときは逃がす先が無いので null を返す。動かさずにスライドの
+ * 全画面へ覆わせ、全画面を切れば出てくる形にする。
+ */
+function setupBoundsAway(displays, onto, size) {
+  const away = (displays ?? []).find((d) => String(d.id) !== String(onto?.id));
+  if (!away) return null;
+  // bounds ではなく workArea。bounds だと Dock やタスクバーの下に潜って掴めない
+  const area = away.workArea ?? away.bounds;
+  return {
+    x: Math.round(area.x + (area.width - size.width) / 2),
+    y: Math.round(area.y + (area.height - size.height) / 2),
+    width: size.width,
+    height: size.height,
+  };
+}
+
+function moveSetupAway(displays, onto) {
+  if (!setupWin || setupWin.isDestroyed()) return;
+  const dest = setupBoundsAway(displays, onto, setupWin.getBounds());
+  if (dest) setupWin.setBounds(dest);
 }
 
 /**
@@ -113,9 +146,19 @@ function overlayWindowOptions(bounds) {
   };
 }
 
-function createOverlayWindow(track, displayId) {
-  const displays = screen.getAllDisplays();
-  const display = displays.find((d) => String(d.id) === String(displayId)) ?? screen.getPrimaryDisplay();
+/**
+ * 弾幕を出す画面。指定が見つからなければメインに落とす。
+ * 投影先を選んだあとにケーブルを抜かれると、選んだ id はもう存在しない。
+ */
+function pickDisplay(displays, displayId, primaryId) {
+  const ds = displays ?? [];
+  return ds.find((d) => String(d.id) === String(displayId))
+    ?? ds.find((d) => String(d.id) === String(primaryId))
+    ?? ds[0]
+    ?? null;
+}
+
+function createOverlayWindow(track, display) {
   const { x, y, width, height } = display.bounds;
 
   overlayWin = new BrowserWindow(overlayWindowOptions({ x, y, width, height }));
@@ -145,13 +188,36 @@ function keepOnTop() {
   overlayWin.moveTop();
 }
 
+/**
+ * クリックを下に通すかどうかを切り替える。
+ *
+ * 切り替える口がキーとスイッチの2つになるので、値は main に1つだけ置く。
+ * 変えたら設定ウィンドウへ送り返す。送らないと、キーで切り替えたときに
+ * 画面に出ている状態と実際が食い違う。
+ */
+function setClickThrough(on) {
+  clickThrough = !!on;
+  overlayWin?.setIgnoreMouseEvents(clickThrough, { forward: true });
+  sendClickThrough();
+  return clickThrough;
+}
+
+/**
+ * いまの値を設定ウィンドウへ渡す。
+ * 送り先は設定ウィンドウだけ。透過ウィンドウはリモートの弾幕ページを読んでいて
+ * preload を持たせていないので、受け口が無い。
+ */
+function sendClickThrough() {
+  if (setupWin && !setupWin.isDestroyed()) {
+    setupWin.webContents.send('clickThrough', clickThrough);
+  }
+}
+
 function registerShortcuts() {
   const mod = process.platform === 'darwin' ? 'Command' : 'Control';
+  // ボタンでも触れるが、キーは残す。登壇中は手が離せないことがある。
   globalShortcut.register(`${mod}+Shift+X`, () => app.quit());
-  globalShortcut.register(`${mod}+Shift+C`, () => {
-    clickThrough = !clickThrough;
-    overlayWin?.setIgnoreMouseEvents(clickThrough, { forward: true });
-  });
+  globalShortcut.register(`${mod}+Shift+C`, () => setClickThrough(!clickThrough));
 }
 
 // 二重起動させない。リンクを開くたびに新しいアプリが立つと、重なりが二重になる。
@@ -164,7 +230,8 @@ if (!app.requestSingleInstanceLock()) {
 app.on('open-url', (e, url) => { e.preventDefault(); deliverTrack(parseTrackId(url)); });
 
 app.whenReady().then(() => {
-  // Dock に出すとフォーカスを取ってしまう場面があるので隠す
+  // Dock に出すとフォーカスを取ってしまう場面があるので隠す。
+  // 呼び戻す道は、設定ウィンドウを出したままにすることで別に確保している。
   if (process.platform === 'darwin') app.dock?.hide();
 
   ipcMain.handle('displays', () => screen.getAllDisplays().map((d, i) => ({
@@ -176,13 +243,20 @@ app.whenReady().then(() => {
   ipcMain.handle('start', (_e, { track, displayId }) => {
     const target = parseTrackId(track);
     if (!target) return { ok: false, reason: '運営からのリンクを貼ってください' };
+    const displays = screen.getAllDisplays();
+    const onto = pickDisplay(displays, displayId, screen.getPrimaryDisplay().id);
+    if (!onto) return { ok: false, reason: '映せる画面が見つかりません' };
     overlayWin?.close();
-    createOverlayWindow(target, displayId);
-    setupWin?.hide();
+    createOverlayWindow(target, onto);
+    // 設定ウィンドウは隠さない。止めるボタンがこの中にしか無いので、隠すと
+    // 「出すには止める、止めるには出す」になって手が無くなる。
+    moveSetupAway(displays, onto);
     return { ok: true, trackId: target.trackId };
   });
 
   ipcMain.handle('stop', () => { overlayWin?.close(); setupWin?.show(); return { ok: true }; });
+  ipcMain.handle('clickThrough', (_e, on) => setClickThrough(on));
+  ipcMain.handle('quit', () => { app.quit(); return { ok: true }; });
   ipcMain.handle('openExternal', (_e, url) => shell.openExternal(url));
   ipcMain.handle('origin', () => ORIGIN);
 
@@ -207,4 +281,4 @@ app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(
 app.on('will-quit', () => globalShortcut.unregisterAll());
 
 // テストから中身を確かめられるようにする
-module.exports = { parseTrackId, overlayUrl, overlayWindowOptions, trackFromArgv };
+module.exports = { parseTrackId, overlayUrl, overlayWindowOptions, trackFromArgv, pickDisplay, setupBoundsAway };

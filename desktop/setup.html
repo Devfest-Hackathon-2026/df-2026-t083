@@ -31,10 +31,40 @@
   #msg[data-kind="bad"] { color:var(--bad); }
   #msg[data-kind="ok"]  { color:var(--good); }
 
-  /* 重ねているあいだ。ここに居る人は窓の向こうを見ているので、文字は少なく。 */
+  /* 流しているあいだ。ここに居る人は窓の向こうを見ているので、文字は少なく。 */
   .live { display:flex; align-items:center; gap:.5rem; font-weight:700; color:var(--good); }
   .live .dot { width:.5rem; height:.5rem; border-radius:50%; background:var(--good);
                box-shadow:0 0 0 4px rgba(79,211,221,.18); }
+
+  /* 運営のリンクから起動されたとき。貼る欄は引っ込め、受け取った中身を読む形で出す。
+     欄の中に `b52bj39v a` と出ると、自分の貼り間違いにしか見えない。 */
+  .got { display:none; }
+  body[data-got="1"] .paste { display:none; }
+  body[data-got="1"]:not([data-running="1"]) .got { display:block; }
+  .got .say { margin:0 0 .5rem; color:var(--good); font-weight:700; }
+  .kv { display:grid; grid-template-columns:auto 1fr; gap:.15rem .75rem; margin:0;
+        padding:.6rem .75rem; border:1px solid var(--line); border-radius:.5rem;
+        background:var(--surface); }
+  .kv dt { font-size:.75rem; color:var(--muted); }
+  .kv dd { margin:0; font-size:.85rem;
+           font-family:ui-monospace, SFMono-Regular, Menlo, "Courier New", monospace; }
+
+  /* クリックを下に通すかどうか。いまどちらなのかを、押す場所そのもので見せる。
+     キーでも切り替わるので、状態を文字でも書いておかないと確かめられない。 */
+  .sw { display:flex; align-items:center; justify-content:space-between; gap:.75rem;
+        margin:0; padding:.6rem .75rem; border:1px solid var(--line2); border-radius:.5rem;
+        background:var(--surface2); font-size:.85rem; color:var(--ink); cursor:pointer; }
+  .sw .what { font-weight:700; }
+  .sw .now { display:block; font-size:.75rem; font-weight:400; color:var(--muted); }
+  .sw input { appearance:none; flex:0 0 auto; width:2.6rem; height:1.5rem; margin:0; padding:0;
+        position:relative; border:0; border-radius:1rem; background:var(--line2);
+        cursor:pointer; transition:background .15s; }
+  .sw input::after { content:""; position:absolute; top:.19rem; left:.19rem;
+        width:1.12rem; height:1.12rem; border-radius:50%; background:var(--ink2);
+        transition:transform .15s, background .15s; }
+  .sw input:checked { background:var(--accent); }
+  .sw input:checked::after { transform:translateX(1.1rem); background:var(--accent-ink); }
+  .sw input:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
 
   .keys { margin:0; font-size:.75rem; color:var(--muted); line-height:1.9; }
   .keys a { color:var(--accent); }
@@ -46,35 +76,55 @@
   body[data-running="1"] .idle { display:none; }
   body[data-running="1"] .running { display:block; }
   body[data-running="1"] .live { display:flex; }
+  body[data-running="1"] .sw { display:flex; }
 </style>
 
 <body>
   <div>
     <h1>弾幕スライド</h1>
-    <p class="say idle">運営から届いたリンクを貼ると、スライドの上に弾幕を重ねます。</p>
+    <p class="say idle paste">運営から届いたリンクを貼ると、スライドの上に弾幕を流します。</p>
   </div>
 
-  <div class="live running"><span class="dot"></span><span id="liveText">重ねています</span></div>
+  <div class="live running"><span class="dot"></span><span id="liveText">流しています</span></div>
 
-  <div class="idle">
+  <div class="idle paste">
     <label for="track">運営からのリンク</label>
     <input id="track" placeholder="https://.../stage.html?e=…&t=…" autocomplete="off" spellcheck="false">
   </div>
 
+  <div class="got">
+    <p class="say">運営からのリンクを受け取りました。貼る必要はありません。</p>
+    <dl class="kv">
+      <dt>イベント</dt><dd id="gotEvent"></dd>
+      <dt>トラック</dt><dd id="gotTrack"></dd>
+    </dl>
+  </div>
+
   <div class="idle">
-    <label for="display">重ねる画面</label>
+    <label for="display">流す画面</label>
     <select id="display"></select>
   </div>
 
   <p id="msg" data-kind=""></p>
 
-  <button id="go" class="idle">スライドに重ねる</button>
-  <button id="halt" class="running ghost">重ねるのをやめる</button>
+  <button id="go" class="idle">スライドに流す</button>
+  <button id="halt" class="running ghost">流すのをやめる</button>
+
+  <label class="sw running" for="through">
+    <span>
+      <span class="what">クリックを下に通す</span>
+      <span class="now" id="throughNow">通している（弾幕の上からスライドを操作できる）</span>
+    </span>
+    <input type="checkbox" id="through" checked>
+  </label>
 
   <hr>
 
+  <button id="quit" class="ghost">終了する</button>
+
   <p class="keys">
-    <kbd id="k1">⌘⇧C</kbd> クリックを下に通すかどうかを切り替える<br>
+    手が離せないときは、キーでも同じことができる。<br>
+    <kbd id="k1">⌘⇧C</kbd> クリックを下に通すかどうか<br>
     <kbd id="k2">⌘⇧X</kbd> 終了する
   </p>
 
@@ -86,6 +136,11 @@
 <script>
   const $ = (id) => document.getElementById(id);
   const msg = (text, kind = '') => { $('msg').textContent = text; $('msg').dataset.kind = kind; };
+
+  // 運営のリンクから渡ってきたトラック。入力欄には入れないので、ここで持つ。
+  let received = null;
+  // 受け取っていれば貼る欄は出ていない。最初に触る場所をそれに合わせる。
+  const focusFirst = () => (received ? $('go') : $('track')).focus();
 
   if (!navigator.platform.startsWith('Mac')) {
     $('k1').textContent = 'Ctrl+Shift+C';
@@ -101,23 +156,31 @@
       o.selected = ds.length > 1 ? !d.primary : d.primary;
       $('display').append(o);
     }
-    $('track').focus();
+    focusFirst();
   })();
 
   // 運営のリンクから起動されたとき。登壇者に貼らせないための経路。
+  //
+  // 入力欄には差し込まない。欄の中に `b52bj39v a` と並ぶと、受け取れたのではなく
+  // 自分が貼り間違えたように見える。受け取れた事実と、受け取った中身を分けて出す。
   window.shell.onTrack?.((target) => {
-    $('track').value = `${target.eventId} ${target.trackId}`;
-    msg('リンクを受け取りました。あとは重ねるだけです', 'ok');
+    received = target;
+    $('gotEvent').textContent = target.eventId;
+    $('gotTrack').textContent = target.trackId;
+    document.body.dataset.got = '1';
+    msg('');
     $('go').focus();
   });
 
   async function go() {
+    // 手で貼る経路は変えない。受け取ったぶんも parseTrackId が受け付ける形で渡す。
+    const track = received ? `${received.eventId} ${received.trackId}` : $('track').value;
     $('go').disabled = true;
-    const r = await window.shell.start({ track: $('track').value, displayId: $('display').value });
+    const r = await window.shell.start({ track, displayId: $('display').value });
     $('go').disabled = false;
-    if (!r.ok) { msg(r.reason, 'bad'); $('track').focus(); return; }
+    if (!r.ok) { msg(r.reason, 'bad'); focusFirst(); return; }
     msg('');
-    $('liveText').textContent = `${r.trackId} を重ねています`;
+    $('liveText').textContent = `${r.trackId} を流しています`;
     document.body.dataset.running = '1';
   }
 
@@ -128,13 +191,28 @@
     window.shell.openExternal(`${origin}/organizer.html`);
   });
 
+  // クリックを下に通すかどうかの持ち主は main。キーからも切り替わるので、
+  // 画面に出す値は必ず送られてきたものにする。ここで反転させると、キーで
+  // 切り替えたぶんがずれて、スイッチが実際と逆を指すようになる。
+  window.shell.onClickThrough?.((on) => {
+    // 届いた印を残す。既定の checked と見分けが付かないと、送る経路が
+    // 切れていても気づけない（test/shell/window.test.mjs がここを見る）。
+    document.body.dataset.through = on ? '1' : '0';
+    $('through').checked = on;
+    $('throughNow').textContent = on
+      ? '通している（弾幕の上からスライドを操作できる）'
+      : '通していない（弾幕のウィンドウがクリックを受け取る）';
+  });
+  $('through').addEventListener('change', (e) => window.shell.setClickThrough(e.target.checked));
+  $('quit').addEventListener('click', () => window.shell.quit());
+
   $('go').addEventListener('click', go);
   $('track').addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
   $('halt').addEventListener('click', async () => {
     await window.shell.stop();
     document.body.dataset.running = '';
     msg('');
-    $('track').focus();
+    focusFirst();
   });
 </script>
 </body>

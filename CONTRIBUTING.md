@@ -63,7 +63,7 @@ go install github.com/xpadev-net/gh-review-hook/cmd/gh-review-hook@latest
 | ジョブ | 内容 |
 |---|---|
 | 弾幕エンジンのテスト | `node --test` で 76 件 |
-| 透過シェルの設定 | `node --test` で 27 件（Electron のウィンドウ設定とリンクの解釈） |
+| 透過シェルの設定 | `node --test` で 37 件（Electron のウィンドウ設定とリンクの解釈） |
 | Firestore のテスト（Rules と境界） | エミュレータで Rules 61 件 + 境界 17 件 |
 | 実ブラウザでの検証 | Playwright + エミュレータで 56 件 |
 | Rules の不変条件と生成物のガード | テストモードの Rules の混入、守りの欠落、生成物の追跡を機械で落とす |
