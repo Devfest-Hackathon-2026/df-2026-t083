@@ -31,7 +31,7 @@
   #msg[data-kind="bad"] { color:var(--bad); }
   #msg[data-kind="ok"]  { color:var(--good); }
 
-  /* 重ねているあいだ。ここに居る人は窓の向こうを見ているので、文字は少なく。 */
+  /* 流しているあいだ。ここに居る人は窓の向こうを見ているので、文字は少なく。 */
   .live { display:flex; align-items:center; gap:.5rem; font-weight:700; color:var(--good); }
   .live .dot { width:.5rem; height:.5rem; border-radius:50%; background:var(--good);
                box-shadow:0 0 0 4px rgba(79,211,221,.18); }
@@ -51,10 +51,10 @@
 <body>
   <div>
     <h1>弾幕スライド</h1>
-    <p class="say idle">運営から届いたリンクを貼ると、スライドの上に弾幕を重ねます。</p>
+    <p class="say idle">運営から届いたリンクを貼ると、スライドの上に弾幕を流します。</p>
   </div>
 
-  <div class="live running"><span class="dot"></span><span id="liveText">重ねています</span></div>
+  <div class="live running"><span class="dot"></span><span id="liveText">流しています</span></div>
 
   <div class="idle">
     <label for="track">運営からのリンク</label>
@@ -62,14 +62,14 @@
   </div>
 
   <div class="idle">
-    <label for="display">重ねる画面</label>
+    <label for="display">流す画面</label>
     <select id="display"></select>
   </div>
 
   <p id="msg" data-kind=""></p>
 
-  <button id="go" class="idle">スライドに重ねる</button>
-  <button id="halt" class="running ghost">重ねるのをやめる</button>
+  <button id="go" class="idle">スライドに流す</button>
+  <button id="halt" class="running ghost">流すのをやめる</button>
 
   <hr>
 
@@ -107,7 +107,7 @@
   // 運営のリンクから起動されたとき。登壇者に貼らせないための経路。
   window.shell.onTrack?.((target) => {
     $('track').value = `${target.eventId} ${target.trackId}`;
-    msg('リンクを受け取りました。あとは重ねるだけです', 'ok');
+    msg('リンクを受け取りました。あとは流すだけです', 'ok');
     $('go').focus();
   });
 
@@ -117,7 +117,7 @@
     $('go').disabled = false;
     if (!r.ok) { msg(r.reason, 'bad'); $('track').focus(); return; }
     msg('');
-    $('liveText').textContent = `${r.trackId} を重ねています`;
+    $('liveText').textContent = `${r.trackId} を流しています`;
     document.body.dataset.running = '1';
   }
 

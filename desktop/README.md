@@ -31,7 +31,7 @@ DANMAKU_ORIGIN=http://127.0.0.1:5055 npm run shell
 |---|---|
 | トラックID または 投稿URL | QR の URL をそのまま貼ってもいい |
 | `danmaku://track/xxx` のリンク | 運営のリンクから起動すると**貼らずに入る** |
-| 重ねる画面 | 拡張ディスプレイを繋いでいるときは投影先を選ぶ |
+| 流す画面 | 拡張ディスプレイを繋いでいるときは投影先を選ぶ |
 | <kbd>⌘⇧C</kbd> / <kbd>Ctrl+Shift+C</kbd> | クリックを通すかどうかを切り替える |
 | <kbd>⌘⇧X</kbd> / <kbd>Ctrl+Shift+X</kbd> | 終了する |
 
