@@ -321,6 +321,9 @@ export async function createOrganizer({ eventId, random = () => Math.random() } 
   function paintTracks(eventId, rows) {
     const body = el('tracks');
     body.replaceChildren();
+    // 1つも無いときだけ、トラックが何なのかを出す。
+    // 並んでいれば見れば分かるので、ずっと出しておく必要はない。
+    el('noTracks').classList.toggle('hidden', rows.length > 0);
     for (const t of rows) {
       const tr = document.createElement('tr');
 
