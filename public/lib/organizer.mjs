@@ -30,6 +30,37 @@ export async function createOrganizer({ eventId, random = () => Math.random() } 
   };
   const fail = (text) => say(text, 'bad');
 
+  /**
+   * 日付の欄を読む。
+   *
+   * `<input type="date">` は、打ちかけ・存在しない日・範囲外のとき value が空文字になる。
+   * そのまま `value || ''` で拾うと、200666/06/31 と打った人のイベントが
+   * 「日付なし」で黙って作られる。打った本人には何も起きていないように見える。
+   * 空にしたのか、読めないのかを区別して返す。
+   *
+   * @returns {string|null} ISO の文字列。空欄なら ''。読めなければ null。
+   */
+  function readDate(input) {
+    if (input.value) return input.value;
+    // 空に見えても、中に打ちかけが残っていれば「空欄」ではない
+    return input.validity.badInput || input.validity.rangeOverflow
+      || input.validity.rangeUnderflow ? null : '';
+  }
+  const DATE_HELP = '開催日を読めません。日付なしで保存されます（年は4桁、実在する日付で）';
+
+  /**
+   * 欄を離れたときに、読めないことだけ伝える。操作は止めない。
+   *
+   * 開催日は任意で、無くてもイベントは作れるし、あとから詳細画面で直せる。
+   * 任意の欄のために「イベントを作る」を止めるほうが損が大きい。
+   * change は打ちかけのままだと鳴らないので blur で見る。
+   */
+  function warnOnBadDate(input) {
+    input.addEventListener('blur', () => {
+      if (readDate(input) === null) fail(DATE_HELP);
+    });
+  }
+
   // 運営は匿名では入れない。イベントは当日まで残るので、端末を変えても
   // 同じものを開ける必要がある。Rules 側でも匿名の作成・削除を拒んでいる。
   let uid, db, sdk, events, booted = false;
@@ -83,7 +114,7 @@ export async function createOrganizer({ eventId, random = () => Math.random() } 
       el('createEvent').disabled = true;
       try {
         const id = newEventId(random);
-        await events.createEvent(id, { name, heldOn: el('newEventDate').value || '' });
+        await events.createEvent(id, { name, heldOn: readDate(el('newEventDate')) ?? '' });
         await events.setEventHandoff(id, newHandoffCode(random));
         location.href = withEnv(`./organizer.html?e=${encodeURIComponent(id)}`);
       } catch (e) {
@@ -91,6 +122,8 @@ export async function createOrganizer({ eventId, random = () => Math.random() } 
         el('createEvent').disabled = false;
       }
     });
+    warnOnBadDate(el('newEventDate'));
+
     // Enter では作らない。押し間違いでイベントが増えると消す手間になる。
     el('newEventName').focus();
 
@@ -205,7 +238,7 @@ export async function createOrganizer({ eventId, random = () => Math.random() } 
         return;
       }
       try {
-        await events.renameEvent(id, { name, heldOn: el('evDateInput').value || '' });
+        await events.renameEvent(id, { name, heldOn: readDate(el('evDateInput')) ?? '' });
         say('保存しました', 'ok');
       } catch (e) {
         fail(`保存できない: ${e.code ?? e.message}`);
@@ -214,6 +247,7 @@ export async function createOrganizer({ eventId, random = () => Math.random() } 
     };
     el('evNameInput').addEventListener('change', saveEvent);
     el('evDateInput').addEventListener('change', saveEvent);
+    warnOnBadDate(el('evDateInput'));
 
     el('deleteEvent').addEventListener('click', async () => {
       const name = el('evNameInput').value.trim() || 'このイベント';

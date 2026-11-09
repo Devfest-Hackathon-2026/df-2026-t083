@@ -122,7 +122,7 @@
         <label class="field grow"><span>イベント名</span>
           <input id="newEventName" placeholder="例：学内LT大会 冬" maxlength="60" autocomplete="off"></label>
         <label class="field" style="flex:0 1 13rem"><span>開催日</span>
-          <input id="newEventDate" type="date"></label>
+          <input id="newEventDate" type="date" min="2000-01-01" max="2099-12-31"></label>
         <button id="createEvent" class="btn primary">イベントを作る</button>
       </div>
     </div>
@@ -165,7 +165,7 @@
         <p class="lead" id="evMeta">—</p>
       </div>
       <label class="field when"><span>開催日</span>
-        <input id="evDateInput" type="date"></label>
+        <input id="evDateInput" type="date" min="2000-01-01" max="2099-12-31"></label>
     </div>
 
     <div class="lane">
