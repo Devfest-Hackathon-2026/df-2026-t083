@@ -107,8 +107,19 @@ async function speakerLink(orgPage, row = 0) {
   return url.replace(/^https?:\/\/[^/]+/, HOST) + '&emu=1';
 }
 
-async function makeEventInBrowser(name, trackNames = ['Track A'], heldOn = '2026-12-12', scheme = null) {
-  const r = await open(`${HOST}/organizer.html?emu=1`, scheme ? { scheme } : {});
+/** 今日。「今日」の面に出るイベントは、この日付で作る必要がある。 */
+const TODAY = new Date().toISOString().slice(0, 10);
+
+/**
+ * イベントとトラックを作り、準備の画面を返す。
+ *
+ * ctx を渡すと、同じ運営として2つめのイベントを作れる。渡さなければ
+ * 別のブラウザ文脈になり、別の運営アカウントになる（エミュレータは毎回作る）。
+ */
+async function makeEventInBrowser(
+  name, trackNames = ['Track A'], heldOn = '2026-12-12', scheme = null, ctx = null) {
+  const r = await open(`${HOST}/organizer.html?emu=1`,
+    ctx ? { ctx } : (scheme ? { scheme } : {}));
   // 運営が作ったものを同じ人として触れるよう、ctx を返して使い回す
   await signInAsOrganizer(r.page);
   await r.page.fill('#newEventName', name);
@@ -128,17 +139,36 @@ async function makeEventInBrowser(name, trackNames = ['Track A'], heldOn = '2026
 }
 
 /**
- * イベントとトラックを作る。作った時点で受付中なので、そのまま投稿できる。
+ * 今日ひらくイベントを作る。作った時点で受付中なので、そのまま投稿できる。
  *
- * makeEventInBrowser との違いは、受付中になるまで待つところだけ。
+ * makeEventInBrowser との違いは開催日だけ。今日にすると当日の面（一覧の「今日」）に出て、
+ * 受付の開け閉めができるようになる。
+ *
+ * 以前はここで詳細の `#tracks .pill.good` が出るのを待っていた。受付の表示が
+ * 当日の面へ移ったので、同じものを待つなら毎回もう1枚ページを開くことになる。
+ * 待っていたのは「作った直後は受付中」で、それは createTrack が stopped:false で
+ * 書くことそのもの。別の試験（作ったらすぐ送れる／受付状況がトラックの数とともに出る）が
+ * 見ているので、ここでは行が届くところまでで足りる。
  */
 async function makeLiveEvent(name, trackNames = ['Track A'], scheme = null) {
-  const org = await makeEventInBrowser(name, trackNames, '2026-12-12', scheme);
-  await org.page.waitForFunction(
-    (want) => document.querySelectorAll('#tracks .pill.good').length === want,
-    trackNames.length, { timeout: 25000 });
-  return org;
+  return makeEventInBrowser(name, trackNames, TODAY, scheme);
 }
+
+/**
+ * 当日の面を開く。受付の開け閉めはこちらにある。
+ *
+ * 作った運営と同じ ctx で開く。別の文脈で開くと別の運営になり、
+ * 自分のイベントが1つも無い面が出る。
+ */
+async function openToday(org) {
+  const r = await open(`${HOST}/organizer.html?emu=1`, { ctx: org.page.context() });
+  await r.page.waitForSelector(`#today [data-event="${org.eventId}"] .pill`,
+    { state: 'visible', timeout: 25000 });
+  return r;
+}
+
+/** 当日の面の、そのイベントの塊。操作は必ずこの中から押す。 */
+const todayCard = (page, eventId) => page.locator(`#today [data-event="${eventId}"]`);
 
 // --- 運営の画面 ---------------------------------------------------------
 await t('イベントを作ると詳細へ移り、URLにIDが残る', async () => {
@@ -195,10 +225,17 @@ await t('登壇用リンクは合言葉を持たない', async () => {
 });
 
 await t('チラシ用QRが読み取れる', async () => {
+  // QR は画面に出さなくなった。刷られる紙のほうを読む。
+  // 運営が実際に配るのはこの紙で、画面の絵は誰も読み取らない。
   const { page, eventId } = await makeEventInBrowser('QRの会', []);
-  await page.waitForFunction(() => document.querySelector('#evQr svg') !== null, { timeout: 20000 });
-  const rgba = await page.evaluate(async () => {
-    const svg = document.querySelector('#evQr svg').outerHTML;
+  const [sheet] = await Promise.all([
+    page.context().waitForEvent('page'),
+    page.click('#printEvQr'),
+  ]);
+  await sheet.waitForFunction(() => document.querySelector('svg') !== null, { timeout: 20000 });
+  assert(/QRの会/.test(await sheet.title()), await sheet.title());
+  const rgba = await sheet.evaluate(async () => {
+    const svg = document.querySelector('svg').outerHTML;
     const img = new Image();
     const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
     await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url; });
@@ -213,7 +250,9 @@ await t('チラシ用QRが読み取れる', async () => {
   const dec = jsQR(new Uint8ClampedArray(rgba.data), rgba.size, rgba.size);
   assert(dec !== null, 'QR を読み取れなかった');
   assert(dec.data.endsWith(`/e/${eventId}`), `読み取り結果が違う: ${dec.data}`);
-  await page.close();
+  // 配る URL は画面にも出ている。読み上げて渡すことがある。
+  assert((await page.textContent('#evUrl')).endsWith(`/e/${eventId}`), await page.textContent('#evUrl'));
+  await sheet.close(); await page.close();
 });
 
 await t('受付状況がトラックの数とともに出る', async () => {
@@ -232,17 +271,43 @@ await t('受付状況がトラックの数とともに出る', async () => {
 });
 
 await t('全トラックの投稿を止められる', async () => {
-  const { page, eventId } = await makeLiveEvent('非常停止の会', ['Track A', 'Track B']);
-  await page.click('#stopAll');
-  await page.waitForFunction(
-    () => document.querySelectorAll('#tracks .pill.bad').length === 2, { timeout: 20000 });
+  const org = await makeLiveEvent('非常停止の会', ['Track A', 'Track B']);
+  const day = await openToday(org);
+  await todayCard(day.page, org.eventId).locator('.btn.stopAll').click();
+  await day.page.waitForFunction((id) =>
+    document.querySelectorAll(`#today [data-event="${id}"] .pill.bad`).length === 2,
+  org.eventId, { timeout: 20000 });
 
   // 実際に投稿が拒否される
   const po = await actor();
   let denied = false;
-  try { await busFor(po, eventId, 'a').post('止まったはず'); } catch { denied = true; }
+  try { await busFor(po, org.eventId, 'a').post('止まったはず'); } catch { denied = true; }
   assert(denied, '止めたのに投稿が通った');
-  await page.close();
+  await day.page.close(); await org.page.close();
+});
+
+await t('「全部止める」は同じ日の別のイベントに届かない', async () => {
+  // 当日の操作をイベントごとに分けた理由そのもの。日付でまとめると、
+  // 隣でやっている別のイベントの受付まで閉じてしまう。
+  const mine = await makeLiveEvent('こっちの会', ['Track A']);
+  const other = await makeEventInBrowser(
+    'となりの会', ['Track A'], TODAY, null, mine.page.context());
+  const day = await openToday(mine);
+  await day.page.waitForFunction((id) =>
+    document.querySelector(`#today [data-event="${id}"] .pill.good`) !== null,
+  other.eventId, { timeout: 25000 });
+
+  await todayCard(day.page, mine.eventId).locator('.btn.stopAll').click();
+  await day.page.waitForFunction((id) =>
+    document.querySelectorAll(`#today [data-event="${id}"] .pill.bad`).length === 1,
+  mine.eventId, { timeout: 20000 });
+
+  // となりは受付中のまま。画面だけでなく、実際に投稿も通る。
+  assert(await todayCard(day.page, other.eventId).locator('.pill.bad').count() === 0,
+    '別のイベントまで止まった');
+  const po = await actor();
+  await busFor(po, other.eventId, 'a').post('となりはまだ送れる');
+  await day.page.close(); await other.page.close(); await mine.page.close();
 });
 
 await t('次に足すトラック名が入っている', async () => {
@@ -298,16 +363,36 @@ await t('イベントをトラックごと削除できる', async () => {
   await org.page.close();
 });
 
-await t('消す操作は非常停止から離れている', async () => {
-  // 隣り合っていると押し間違える
-  const org = await makeEventInBrowser('距離の会', ['Track A']);
+await t('消す操作は、当日に押す操作と同じ場所に無い', async () => {
+  // 守りたいのは「戻せない操作を、よく押す操作の隣に置かない」。
+  // 非常停止が当日の面へ移ったので、距離ではなく置き場所で見る。
+  // 当日その場で押す面には消すものを1つも置かず、残った準備の面では、
+  // いちばんよく押す表から離れていることを測る。
+  const org = await makeLiveEvent('距離の会', ['Track A']);
+  const day = await openToday(org);
+
+  assert(!await day.page.isVisible('#deleteEvent'), '当日の面にイベントの削除がある');
+  assert(await day.page.locator('#today .btn.remove').count() === 0,
+    '当日の面にトラックの削除がある');
+  assert(await day.page.locator('#today .btn.stopAll').count() > 0, '止める操作が無い');
+
   const gap = await org.page.evaluate(() => {
-    const stop = document.getElementById('stopAll').getBoundingClientRect();
+    const table = document.querySelector('#tracks').closest('table').getBoundingClientRect();
     const del = document.getElementById('deleteEvent').getBoundingClientRect();
-    return Math.abs(del.top - stop.bottom);
+    return del.top - table.bottom;
   });
-  assert(gap > 200, `近すぎる: ${Math.round(gap)}px`);
-  await org.page.close();
+  assert(gap > 150, `近すぎる: ${Math.round(gap)}px`);
+  await day.page.close(); await org.page.close();
+});
+
+await t('今日ひらくイベントが無ければ「今日」を出さない', async () => {
+  // 見出しだけ残すと、毎日ひらく画面の上端が「今日は何も無い」で埋まる。
+  const org = await makeEventInBrowser('来年の会', ['Track A'], '2027-12-12');
+  const list = await open(`${HOST}/organizer.html?emu=1`, { ctx: org.page.context() });
+  await list.page.waitForFunction(
+    () => document.querySelectorAll('#upcoming tr').length > 0, { timeout: 25000 });
+  assert(!await list.page.isVisible('#todayLane'), '今日のイベントが無いのに出ている');
+  await list.page.close(); await org.page.close();
 });
 
 // --- 登壇者の画面 -------------------------------------------------------
@@ -436,9 +521,11 @@ await t('作ったらすぐ送れる（運営の開け忘れで止まらない�
 
 await t('全トラックを止めてから、まとめて開け直せる', async () => {
   const org = await makeLiveEvent('開け直しの会', ['Track A', 'Track B']);
-  await org.page.click('#stopAll');
-  await org.page.waitForFunction(
-    () => document.querySelectorAll('#tracks .pill.bad').length === 2, { timeout: 20000 });
+  const day = await openToday(org);
+  await todayCard(day.page, org.eventId).locator('.btn.stopAll').click();
+  await day.page.waitForFunction((id) =>
+    document.querySelectorAll(`#today [data-event="${id}"] .pill.bad`).length === 2,
+  org.eventId, { timeout: 20000 });
   const po = await open(`${HOST}/post.html?emu=1&e=${org.eventId}&t=a`);
   await po.page.waitForFunction(
     () => /受付を待っています/.test(document.getElementById('title')?.textContent ?? ''),
@@ -447,11 +534,11 @@ await t('全トラックを止めてから、まとめて開け直せる', async
   await po.page.waitForTimeout(400);
   assert(await po.page.isDisabled('#send'), '止めたのに押せる');
 
-  await org.page.click('#openAll');
+  await todayCard(day.page, org.eventId).locator('.btn.openAll').click();
   await po.page.waitForFunction(
     () => /受付中/.test(document.getElementById('title')?.textContent ?? ''), { timeout: 20000 });
   await po.page.waitForFunction(() => !document.getElementById('send').disabled, { timeout: 20000 });
-  await po.page.close(); await org.page.close();
+  await po.page.close(); await day.page.close(); await org.page.close();
 });
 
 await t('届いたコメントが手元に出て、件数が増える', async () => {
@@ -472,6 +559,7 @@ await t('届いたコメントが手元に出て、件数が増える', async ()
 
 await t('投稿を止めるのは運営だけ（登壇者の画面に操作はない）', async () => {
   const org = await makeLiveEvent('止める会', ['Track A']);
+  const day = await openToday(org);
   const sp = await open(await speakerLink(org.page));
   await sp.page.waitForFunction(
     () => /受付中/.test(document.getElementById('stateText')?.textContent ?? ''), { timeout: 20000 });
@@ -485,7 +573,7 @@ await t('投稿を止めるのは運営だけ（登壇者の画面に操作は�
   await aud.page.waitForFunction(
     () => /受付中/.test(document.getElementById('title')?.textContent ?? ''), { timeout: 20000 });
 
-  await org.page.locator('#tracks tr').nth(0).locator('.btn.stop').click();
+  await todayCard(day.page, org.eventId).locator('.btn.stop').click();
 
   await aud.page.waitForFunction(
     () => /投稿を受け付けていません/.test(document.getElementById('note')?.textContent ?? ''),
@@ -513,10 +601,11 @@ await t('投稿を止めるのは運営だけ（登壇者の画面に操作は�
   assert(denied, '止めたのにサーバが受けた');
 
   // 運営が戻せば送れる
-  await org.page.locator('#tracks tr').nth(0).locator('.btn.resume').click();
+  await todayCard(day.page, org.eventId).locator('.btn.resume').click();
   await aud.page.waitForFunction(
     () => document.getElementById('send')?.disabled === false, { timeout: 20000 });
-  await aud.page.close(); await sp.page.close(); await org.page.close();
+  await aud.page.close(); await sp.page.close();
+  await day.page.close(); await org.page.close();
 });
 
 await t('Enter では足さない（押し間違いで増やさない）', async () => {
@@ -639,15 +728,17 @@ await t('連投すると残り秒数がボタンと状態行の両方に出る',
 
 await t('停止中は理由が出て、再スキャンが要らないと伝える', async () => {
   const org = await makeLiveEvent('停止表示の会', ['Track A']);
-  await org.page.locator('#tracks tr').nth(0).locator('.btn.stop').click();
-  await org.page.waitForFunction(
-    () => document.querySelectorAll('#tracks .pill.bad').length === 1, { timeout: 20000 });
+  const day = await openToday(org);
+  await todayCard(day.page, org.eventId).locator('.btn.stop').click();
+  await day.page.waitForFunction((id) =>
+    document.querySelectorAll(`#today [data-event="${id}"] .pill.bad`).length === 1,
+  org.eventId, { timeout: 20000 });
   const { page } = await open(`${HOST}/post.html?emu=1&e=${org.eventId}&t=a`);
   await page.waitForFunction(
     () => /投稿を受け付けていません/.test(document.getElementById('note')?.textContent ?? ''),
     { timeout: 20000 });
   assert(/受付を待っています/.test(await page.textContent('#title')), await page.textContent('#title'));
-  await page.close(); await org.page.close();
+  await page.close(); await day.page.close(); await org.page.close();
 });
 
 await t('投稿が弾幕ページに流れる（通し）', async () => {
@@ -819,21 +910,24 @@ async function readableWhileHovering(page, sel) {
 for (const scheme of ['light', 'dark']) {
   await t(`ボタンはホバーしても読める（運営・${scheme}）`, async () => {
     const org = await makeLiveEvent(`ボタンの会 ${scheme}`, ['Track A'], scheme);
-    // 塗りつぶし・枠線・文字だけ、種類をひととおり見る
+    const day = await openToday(org);
+    // 塗りつぶし・枠線・文字だけ、種類をひととおり見る。
+    // 止めるボタンは当日の面、配り物と消すボタンは準備の面にある。
     const targets = [
-      ['#stopAll', 'danger'],
-      ['#addTrack', 'primary'],
-      ['#copyEvUrl', 'quiet'],
-      ['#tracks tr .btn.toSpeaker', '既定'],
+      [day.page, `#today [data-event="${org.eventId}"] .btn.stopAll`, 'caution'],
+      [org.page, '#addTrack', 'primary'],
+      [org.page, '#copyEvUrl', 'quiet'],
+      [org.page, '#tracks tr .btn.toSpeaker', '既定'],
+      [org.page, '#tracks tr .btn.remove', '消す'],
     ];
-    for (const [sel, kind] of targets) {
-      for (const { fg, bg, state } of await readableWhileHovering(org.page, sel)) {
+    for (const [page, sel, kind] of targets) {
+      for (const { fg, bg, state } of await readableWhileHovering(page, sel)) {
         const ratio = contrast(rgb(fg), rgb(bg));
         assert(ratio >= 4.5,
           `${kind}（${sel}）の${state}が読めない: ${ratio.toFixed(2)} (${fg} / ${bg})`);
       }
     }
-    await org.page.close();
+    await day.page.close(); await org.page.close();
   });
 
   await t(`送信ボタンはホバーしても読める（${scheme}）`, async () => {
@@ -870,15 +964,20 @@ for (const scheme of ['light', 'dark']) {
   await t(`状態の表示が ${scheme} で読める`, async () => {
     // 状態は色だけでなく文字でも示している。その文字が地から浮いていないと
     // 「受付中なのか停止中なのか」が読めない。--muted の 4.11:1 もここで見つけた。
-    const org = await makeLiveEvent(`状態配色の会 ${scheme}`, ['Track A'], scheme);
-    await org.page.locator('#tracks tr').nth(0).locator('.btn.stop').click();
-    await org.page.waitForFunction(
-      () => document.querySelectorAll('#tracks .pill.bad').length === 1, { timeout: 20000 });
-    for (const { sel, fg, bg } of await readable(org.page, ['#tracks .pill.bad', '.pill.mute'])) {
+    // 2本にして、受付中と停止中を同じ画面に並べる。片方だけでは、
+    // 並んだときに見分けが付くかどうかを測れない。
+    const org = await makeLiveEvent(`状態配色の会 ${scheme}`, ['Track A', 'Track B'], scheme);
+    const day = await openToday(org);
+    await todayCard(day.page, org.eventId).locator('.btn.stop').nth(0).click();
+    await day.page.waitForFunction((id) =>
+      document.querySelectorAll(`#today [data-event="${id}"] .pill.bad`).length === 1,
+    org.eventId, { timeout: 20000 });
+    for (const { sel, fg, bg } of await readable(day.page,
+      ['#today .pill.bad', '#today .pill.good', '.pill.mute'])) {
       const ratio = contrast(rgb(fg), rgb(bg));
       assert(ratio >= 4.5, `${sel} のコントラストが低い: ${ratio.toFixed(2)} (${fg} / ${bg})`);
     }
-    await org.page.close();
+    await day.page.close(); await org.page.close();
   });
 
   await t(`投稿ページが ${scheme} で読める`, async () => {
@@ -1028,62 +1127,87 @@ await t('終了したイベントもキーボードで開ける', async () => {
 await t('トラックの表が横スクロール無しで収まる', async () => {
   // 列見出しが意味を持っているので、ボタンの文字はそこまで繰り返さない。
   // 「登壇用リンクをコピー」を全列ぶん並べると 1280px でも 115px はみ出していた。
-  const org = await makeEventInBrowser('幅の会', ['Track A', 'Track B']);
+  // 準備と当日の両方を見る。表は2つあり、どちらもはみ出しうる。
+  const org = await makeLiveEvent('幅の会', ['Track A', 'Track B']);
   await org.page.waitForFunction(
     () => document.querySelectorAll('#tracks tr').length === 2, { timeout: 20000 });
-  for (const width of [1280, 1024]) {
-    await org.page.setViewportSize({ width, height: 900 });
-    await org.page.waitForTimeout(200);
-    const over = await org.page.evaluate(() => {
-      const t = document.querySelector('#tracks').closest('table');
-      return Math.round(t.scrollWidth - t.closest('.scroller').clientWidth);
-    });
-    assert(over <= 0, `${width}px で ${over}px はみ出している`);
+  const day = await openToday(org);
+  for (const [page, where] of [[org.page, '準備'], [day.page, '当日']]) {
+    for (const width of [1280, 1024]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.waitForTimeout(200);
+      const over = await page.evaluate(() => Math.max(...[...document.querySelectorAll('.scroller')]
+        .filter((s) => s.offsetParent !== null)
+        .map((s) => Math.round(s.querySelector('table').scrollWidth - s.clientWidth))));
+      assert(over <= 0, `${where}の表が ${width}px で ${over}px はみ出している`);
+    }
+    await page.setViewportSize({ width: 1280, height: 800 });
   }
-  await org.page.setViewportSize({ width: 1280, height: 800 });
-  await org.page.close();
+  await day.page.close(); await org.page.close();
 });
 
 await t('短くしたボタンでも何のボタンか読み上げられる', async () => {
-  // 見える文字は「コピー」まで削ったが、ボタンだけを辿る読み方では
-  // 列見出しが付いてこない。読み上げ用の名前に全部の意味を持たせる。
-  const org = await makeEventInBrowser('名前の会', ['Track A']);
-  const row = org.page.locator('#tracks tr').first();
-  const names = await row.evaluate((tr) =>
+  // 見える文字は列見出しに任せて短い。ボタンだけを辿る読み方では
+  // 列見出しが付いてこないので、読み上げ用の名前に全部の意味を持たせる。
+  // 準備と当日の、どちらの行も同じ決まりで作る。
+  const org = await makeLiveEvent('名前の会', ['Track A']);
+  const day = await openToday(org);
+  const spoken = (row) => row.evaluate((tr) =>
     [...tr.querySelectorAll('button')].map((b) => ({
       見える: b.textContent.trim(),
       読み上げ: b.getAttribute('aria-label') ?? b.textContent.trim(),
     })));
-  for (const n of names) {
+
+  const prep = await spoken(org.page.locator('#tracks tr').first());
+  const live = await spoken(todayCard(day.page, org.eventId).locator('tbody tr').first());
+  for (const n of [...prep, ...live]) {
     assert(/Track A/.test(n.読み上げ), `どのトラックか分からない: ${JSON.stringify(n)}`);
     assert(n.読み上げ.length > n.見える.length, `読み上げが短いまま: ${JSON.stringify(n)}`);
   }
-  assert(names.some((n) => n.見える === 'コピー'), JSON.stringify(names));
-  assert(names.some((n) => n.見える === 'URL'), JSON.stringify(names));
-  await org.page.close();
+  assert(prep.some((n) => n.見える === 'リンクをコピー'), JSON.stringify(prep));
+  assert(prep.some((n) => n.見える === 'URLをコピー'), JSON.stringify(prep));
+  assert(live.some((n) => n.見える === '止める'), JSON.stringify(live));
+  await day.page.close(); await org.page.close();
 });
 
 await t('表に見出しの対応と説明がある', async () => {
-  const org = await makeEventInBrowser('表の会', ['Track A']);
-  const scopes = await org.page.evaluate(() =>
-    [...document.querySelectorAll('#tracks')].map((tb) =>
-      [...tb.closest('table').querySelectorAll('thead th')].map((th) => th.getAttribute('scope'))).flat());
-  assert(scopes.filter((v) => v === 'col').length >= 5, `scope が足りない: ${scopes}`);
-  assert(await org.page.evaluate(() =>
-    document.querySelector('#tracks').closest('table').querySelector('caption') !== null),
-    '表の説明が無い');
-  await org.page.close();
+  // 準備の表と当日の表、どちらも列見出しと説明を持つ。
+  const org = await makeLiveEvent('表の会', ['Track A']);
+  const day = await openToday(org);
+  const look = (page, sel) => page.evaluate((s) =>
+    [...document.querySelectorAll(s)].map((tb) => {
+      const table = tb.closest('table');
+      return {
+        scopes: [...table.querySelectorAll('thead th')].map((th) => th.getAttribute('scope')),
+        caption: table.querySelector('caption')?.textContent ?? null,
+      };
+    }), sel);
+
+  const tables = [...await look(org.page, '#tracks'), ...await look(day.page, '#today tbody')];
+  assert(tables.length === 2, `表が足りない: ${tables.length}`);
+  let cols = 0;
+  for (const tb of tables) {
+    assert(tb.caption, `表の説明が無い: ${JSON.stringify(tb)}`);
+    assert(tb.scopes.every((v) => v === 'col'), `scope の無い列がある: ${tb.scopes}`);
+    cols += tb.scopes.length;
+  }
+  assert(cols >= 5, `列の対応が足りない: ${cols}`);
+  await day.page.close(); await org.page.close();
 });
 
 await t('狭い画面でも本文が横にずれない', async () => {
   // 表は画面が狭いとはみ出す。本文ごとスクロールさせない。
-  const org = await makeEventInBrowser('狭い画面の会', ['Track A']);
-  await org.page.setViewportSize({ width: 390, height: 800 });
-  await org.page.waitForTimeout(400);
-  const overflow = await org.page.evaluate(() =>
-    document.documentElement.scrollWidth - document.documentElement.clientWidth);
-  assert(overflow <= 1, `横にはみ出している: ${overflow}px`);
-  await org.page.close();
+  // 当日の面も見る。イベント名と表が並ぶぶん、はみ出す余地はこちらのほうが大きい。
+  const org = await makeLiveEvent('狭い画面の会', ['Track A']);
+  const day = await openToday(org);
+  for (const page of [org.page, day.page]) {
+    await page.setViewportSize({ width: 390, height: 800 });
+    await page.waitForTimeout(400);
+    const overflow = await page.evaluate(() =>
+      document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    assert(overflow <= 1, `横にはみ出している: ${overflow}px`);
+  }
+  await day.page.close(); await org.page.close();
 });
 
 await browser.close();
