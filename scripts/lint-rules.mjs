@@ -25,24 +25,6 @@ for (const m of testMode) {
   console.error(`  firestore.rules:${line}  ${m[0].trim()}`);
 }
 
-// --- 色の一覧が2か所で食い違っていないか --------------------------------
-// Rules は import できないので、色の一覧は colors.mjs と firestore.rules の
-// 両方に書いてある。片方だけ増やすと「画面では選べるのにサーバが弾く」になり、
-// 観客には理由の分からない失敗として出る。
-{
-  const { COLOR_NAMES } = await import('../public/lib/colors.mjs');
-  const inRules = rules.match(/request\.resource\.data\.color in\s*\[([^\]]*)\]/s);
-  const listed = inRules
-    ? [...inRules[1].matchAll(/'([a-z0-9]+)'/g)].map((m) => m[1])
-    : [];
-  check('色の一覧が Rules と colors.mjs で一致している',
-    listed.length > 0 && listed.join(',') === COLOR_NAMES.join(','));
-  if (listed.join(',') !== COLOR_NAMES.join(',')) {
-    console.error(`  firestore.rules: ${listed.join(',') || '(見つからない)'}`);
-    console.error(`  colors.mjs:      ${COLOR_NAMES.join(',')}`);
-  }
-}
-
 // --- 守りの一行が消えていないか -----------------------------------------
 // どれか1つ欠けるだけで守りが崩れるものを名指しで見張る。
 const invariants = [

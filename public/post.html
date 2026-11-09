@@ -40,19 +40,6 @@
     to { transform: translateX(-115%); opacity: 0; }
   }
 
-  /* 色を選ぶ。2段に分ける。10個を1行に並べると、指で押せる大きさが取れない。 */
-  .hue { display: grid; grid-template-columns: repeat(5, 1fr); gap: .4rem; margin-top: .1rem; }
-  .hue label { position: relative; display: block; }
-  .hue input { position: absolute; opacity: 0; width: 0; height: 0; }
-  .hue span {
-    display: grid; place-items: center; min-height: 44px; border-radius: var(--radius-sm);
-    border: 1px solid var(--line2); background: var(--sw); cursor: pointer;
-    font-size: var(--t-xs); font-weight: 700; color: var(--swInk);
-  }
-  /* 選んだものは枠で示す。色だけで示すと、色が見えない人に伝わらない。 */
-  .hue input:checked + span { outline: 2px solid var(--ink); outline-offset: 2px; }
-  .hue input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
-
   #count { align-self: flex-end; font-size: var(--t-xs); color: var(--muted);
            font-variant-numeric: tabular-nums; }
   #count[data-over="1"] { color: var(--bad); font-weight: 700; }
@@ -92,10 +79,6 @@
       enterkeyhint="send" autocomplete="off" autocapitalize="off"
       aria-describedby="count note"></textarea></label>
   <span id="count" data-over="">0 / 60</span>
-
-  <fieldset class="hue" id="hue" style="border:0;padding:0;margin:0">
-    <legend class="visually-hidden">コメントの色</legend>
-  </fieldset>
 
   <button id="send" class="btn block" disabled>
     <span id="sendFill" aria-hidden="true"></span><span id="sendLabel">送信</span>

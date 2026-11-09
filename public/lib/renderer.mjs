@@ -3,8 +3,6 @@
 // DOM は作らない。コメント本文を DOM に入れないことが、そのまま XSS 対策になる。
 // fillText は文字列を文字として扱うだけで、マークアップとして解釈しない。
 
-import { colorCode, strokeFor, DEFAULT_COLOR } from './colors.mjs';
-
 export const STYLE = {
   font: '600 36px "Hiragino Sans", "Noto Sans JP", "Yu Gothic", sans-serif',
   color: '#ffffff',
@@ -68,18 +66,7 @@ export class Renderer {
       }
     }
 
-    // 色は1件ごとに変わる。黒い塗りのときは縁を白へ反転する
-    // （黒地に黒縁だと文字が消える。niconicomments と同じ考え方）。
-    // 色を持たないコメントは白。style.color を指定して使う呼び出し側
-    // （トップページのデモなど）は、そちらを既定にする。
-    let fill = null, stroke = null;
     for (const it of items) {
-      const name = it.color ?? DEFAULT_COLOR;
-      const f = it.color ? colorCode(name) : this.style.color;
-      const k = it.color ? strokeFor(name) : this.style.strokeColor;
-      // 同じ色が続くなら設定し直さない
-      if (f !== fill) { ctx.fillStyle = f; fill = f; }
-      if (k !== stroke) { ctx.strokeStyle = k; stroke = k; }
       const y = it.y + this.style.baselineOffset;
       ctx.strokeText(it.text, it.x, y);
       ctx.fillText(it.text, it.x, y);

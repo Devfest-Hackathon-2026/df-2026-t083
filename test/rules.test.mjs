@@ -44,13 +44,10 @@ const asStaff = (uid) =>
   env.authenticatedContext(uid, { firebase: { sign_in_provider: 'google.com' } }).firestore();
 
 // 投稿は「コメント + posters」のバッチ。アプリ側もこの形で書く。
-function post(db, trackId, uid, text, eventId = 'ev1', color = undefined) {
+function post(db, trackId, uid, text, eventId = 'ev1') {
   const base = `events/${eventId}/tracks/${trackId}`;
   const b = writeBatch(db);
-  b.set(doc(collection(db, `${base}/comments`)),
-    color === undefined
-      ? { text, createdAt: serverTimestamp() }
-      : { text, createdAt: serverTimestamp(), color });
+  b.set(doc(collection(db, `${base}/comments`)), { text, createdAt: serverTimestamp() });
   b.set(doc(db, `${base}/posters/${uid}`), { lastPostAt: serverTimestamp() });
   return b.commit();
 }
@@ -166,33 +163,12 @@ await t('T5 空文字は投稿できない', () => assertFails(post(as('p1'), 't
 await t('T5 61文字は投稿できない', () => assertFails(post(as('p1'), 'tLive', 'p1', 'あ'.repeat(61))));
 await t('T5 60文字は投稿できる', () => assertSucceeds(post(as('p60'), 'tLive', 'p60', 'あ'.repeat(60))));
 await t('T5 余計なフィールドは落ちる', () => {
-  // 以前はここの例が color だった。color は正式なフィールドになったので、
-  // 知らないフィールドを拒む力そのものを別の名前で見張る。
   const db = as('p2'); const b = writeBatch(db);
   b.set(doc(collection(db, 'events/ev1/tracks/tLive/comments')),
-    { text: 'hi', createdAt: serverTimestamp(), author: 'なりすまし' });
+    { text: 'hi', createdAt: serverTimestamp(), color: 'red' });
   b.set(doc(db, 'events/ev1/tracks/tLive/posters/p2'), { lastPostAt: serverTimestamp() });
   return assertFails(b.commit());
 });
-
-// --- T5c: 色 -----------------------------------------------------------
-// 色は任意フィールド。無い投稿も通し続ける（古いクライアントと既存コメントのため）。
-await t('T5c 色なしの投稿は通る',
-  () => assertSucceeds(post(as('c1'), 'tLive', 'c1', 'いろなし')));
-await t('T5c 一覧にある色は通る',
-  () => assertSucceeds(post(as('c2'), 'tLive', 'c2', 'あか', 'ev1', 'red')));
-await t('T5c 黒も通る（縁を反転して描く）',
-  () => assertSucceeds(post(as('c3'), 'tLive', 'c3', 'くろ', 'ev1', 'black')));
-await t('T5c 一覧に無い色は落ちる',
-  () => assertFails(post(as('c4'), 'tLive', 'c4', 'にじ', 'ev1', 'rainbow')));
-await t('T5c 色コードを直接入れるのは落ちる',
-  () => assertFails(post(as('c5'), 'tLive', 'c5', 'ちょくせつ', 'ev1', '#FF0000')));
-await t('T5c 大文字の色名は落ちる',
-  () => assertFails(post(as('c6'), 'tLive', 'c6', 'おおもじ', 'ev1', 'RED')));
-await t('T5c 色が文字列でなければ落ちる',
-  () => assertFails(post(as('c7'), 'tLive', 'c7', 'かず', 'ev1', 123)));
-await t('T5c 空文字の色は落ちる',
-  () => assertFails(post(as('c8'), 'tLive', 'c8', 'から', 'ev1', '')));
 await t('T5 createdAt のクライアント偽装は落ちる', () => {
   const db = as('p3'); const b = writeBatch(db);
   b.set(doc(collection(db, 'events/ev1/tracks/tLive/comments')),
